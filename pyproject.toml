@@ -1,0 +1,28 @@
+[project]
+name = "spar-harness"
+version = "0.1.0"
+description = "Schema and harness for SPAR project: Strategic interaction between AI Agents"
+readme = "README.md"
+authors = [
+    { name = "Carlos Gorostiza Ibáñez", email = "CarlosGIbanez@proton.me" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.11.0",
+    "inspect-ai>=0.3.276",
+    "openai>=3.24.0",
+    "pydantic>=2.13.5",
+]
+
+[project.scripts]
+spar-harness = "spar_harness:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
