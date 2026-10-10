@@ -58,9 +58,10 @@ class Presenter:
 
     system_prompt: str  # may contain {tool}
     render: Callable[[PlayerId, Observation, PhaseContext], str]
-    # The submit_move schema. It must not depend on the phase, only on the
-    # episode's treatments: the current options are stated in the rendered text.
-    tool: Callable[[PhaseContext], ToolInfo]
+    # The submit_move schema, built once from the player's first observation
+    # (which carries the briefing). It may depend on the episode's treatments
+    # but never on the phase: the current options are stated in the text.
+    tool: Callable[[Observation, PhaseContext], ToolInfo]
     parse: Callable[[PlayerId, dict[str, Any]], Move]  # raises InvalidMove
     probes: Probes  # private side calls made before the move
 
@@ -77,7 +78,7 @@ def model_player(
         nonlocal last_contract
         me = observation.recipient
         if not tools:
-            tools.extend([presenter.tool(context), ANSWER_PROBE_TOOL])
+            tools.extend([presenter.tool(observation, context), ANSWER_PROBE_TOOL])
         if observation.briefing is not None:
             messages.append(
                 ChatMessageSystem(

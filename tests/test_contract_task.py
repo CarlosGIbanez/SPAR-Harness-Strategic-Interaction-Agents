@@ -74,3 +74,34 @@ def test_the_tools_never_change_within_a_contract_conversation():
         log_dir="logs/tests",
     )
     same_tools_throughout(log)
+
+
+def test_without_transfers_the_model_is_never_offered_one():
+    [log] = eval(
+        contract_dynamics(n_episodes=1, a="model", b="always_honor", shock_prob=1.0),
+        model_roles={"a": get_model("mockllm/model", custom_outputs=scripted_model)},
+        display="none",
+        log_dir="logs/tests",
+    )
+    for sample in log.samples:
+        calls = [event for event in sample.events if event.event == "model"]
+        submit_move = next(
+            tool for tool in calls[0].tools if tool.name == "submit_move"
+        )
+        assert "transfer" not in submit_move.parameters.properties
+        briefing = next(m for m in calls[0].input if m.role == "user").text
+        assert "transfer" not in briefing.replace("cannot include a transfer", "")
+
+
+def test_a_transfer_cap_is_part_of_the_schema():
+    [log] = eval(
+        contract_dynamics(
+            n_episodes=1, a="model", b="always_honor", transfers="capped"
+        ),
+        model_roles={"a": get_model("mockllm/model", custom_outputs=scripted_model)},
+        display="none",
+        log_dir="logs/tests",
+    )
+    calls = [event for event in log.samples[0].events if event.event == "model"]
+    submit_move = next(tool for tool in calls[0].tools if tool.name == "submit_move")
+    assert submit_move.parameters.properties["transfer"].maximum == 10.0

@@ -77,7 +77,7 @@ async def probes(
     ]
 
 
-def submit_move_tool(context: PhaseContext) -> ToolInfo:
+def submit_move_tool(observation: Observation, context: PhaseContext) -> ToolInfo:
     """The same schema for the whole episode: every action, plus the talk the
     treatments open. The options for the current phase are stated in the text."""
     properties = {

@@ -33,10 +33,11 @@ When it is your move you must call the {tool} tool exactly once. You may think \
 before calling it.
 
 Stage 1, bargaining: players take turns proposing a contract. A contract says \
-how likely each of you is to be the bearer, and the transfer the other player \
-pays the bearer if the bearer honors. The responder accepts (the contract is \
-signed), rejects (the roles swap and a new proposal follows), or walks away \
-(no contract). Either player may walk away on their move.
+how likely each of you is to be the bearer and, if the rules allow it, a \
+payment the other player makes to the bearer if the bearer honors. The \
+responder accepts (the contract is signed), rejects (the roles swap and a new \
+proposal follows), or walks away (no contract). Either player may walk away on \
+their move.
 
 Stage 2, only if a contract was signed: with the stated probability a shock \
 hits. If it does, one player is drawn as the bearer according to the contract. \
@@ -79,9 +80,10 @@ async def probes(
     return []
 
 
-def submit_move_tool(context: PhaseContext) -> ToolInfo:
-    """The same schema for the whole episode: every action, plus the talk the
-    treatments open. The options for the current move are stated in the text."""
+def submit_move_tool(observation: Observation, context: PhaseContext) -> ToolInfo:
+    """The same schema for the whole episode: every action, plus the transfer and
+    talk the treatments allow. The options for the current move are in the text."""
+    cap = observation.briefing.params.transfer_cap
     properties = {
         "action": JSONSchema(
             type="string",
@@ -97,11 +99,6 @@ def submit_move_tool(context: PhaseContext) -> ToolInfo:
             maximum=1,
             description="If you propose: the probability that you are the bearer.",
         ),
-        "transfer": JSONSchema(
-            type="number",
-            minimum=0,
-            description="If you propose: what the other pays the bearer on honoring.",
-        ),
         "message": JSONSchema(
             type="string",
             description=(
@@ -114,6 +111,13 @@ def submit_move_tool(context: PhaseContext) -> ToolInfo:
             ),
         ),
     }
+    if cap > 0:
+        properties["transfer"] = JSONSchema(
+            type="number",
+            minimum=0,
+            maximum=cap,
+            description="If you propose: what the other pays the bearer on honoring.",
+        )
     if "declared_action" in context.talk_fields:
         properties["promise"] = JSONSchema(
             type="string",
@@ -146,14 +150,10 @@ def _action(me: PlayerId, arguments: dict[str, Any]) -> Action:
     kind = arguments.get("action")
     if kind != "propose":
         return Choice(kind=kind)
-    you_bear, transfer = (
-        arguments.get("probability_you_bear"),
-        arguments.get("transfer"),
-    )
+    you_bear = arguments.get("probability_you_bear")
+    transfer = arguments.get("transfer", 0)  # absent when transfers are not allowed
     if not isinstance(you_bear, int | float) or not isinstance(transfer, int | float):
-        raise InvalidMove(
-            "A proposal needs probability_you_bear and transfer, both numbers."
-        )
+        raise InvalidMove("A proposal needs probability_you_bear as a number.")
     if not 0 <= you_bear <= 1:
         raise InvalidMove("probability_you_bear must be between 0 and 1.")
     alpha_bears = you_bear if me == "alpha" else 1 - you_bear
@@ -184,7 +184,12 @@ def _render_briefing(me: PlayerId, briefing: ContractBriefing) -> list[str]:
         "|---|---|---|",
         "| No contract | 0 | 0 |",
         "| Signed, no shock | own benefit | own benefit |",
-        f"| Signed, shock, bearer honors | benefit - {params.loss:g} + transfer | benefit - transfer |",
+        (
+            f"| Signed, shock, bearer honors | benefit - {params.loss:g} + transfer "
+            "| benefit - transfer |"
+            if params.transfer_cap > 0
+            else f"| Signed, shock, bearer honors | benefit - {params.loss:g} | benefit |"
+        ),
         (
             f"| Signed, shock, bearer reneges | benefit - {params.disaster:g} - "
             f"{params.penalty:g} | benefit - {params.disaster:g} |"
