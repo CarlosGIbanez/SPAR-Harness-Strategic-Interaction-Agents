@@ -2,6 +2,7 @@
 
 from inspect_ai import eval
 from inspect_ai.model import ModelOutput, get_model
+
 from spar_harness.contract_task import contract_dynamics
 
 leaks = []
@@ -9,22 +10,16 @@ leaks = []
 
 def scripted_model(input, tools, tool_choice, config):
     """Answers probes, proposes a credible fair contract, signs, pleads, honors."""
-    transcript = str([message.model_dump() for message in input])
-    tool = tools[0]
-    if tool.name == "answer_probe":
-        [field] = tool.parameters.required
-        return ModelOutput.for_tool_call("mock", "answer_probe", {field: 0.5})
-    if "Private question" in transcript:
-        leaks.append(transcript)
-    properties = tool.parameters.properties
-    if "action" not in properties:  # a persuasion message
-        return ModelOutput.for_tool_call(
-            "mock", "submit_move", {"message": "Please honor."}
-        )
-    allowed = properties["action"].enum
-    if "propose" in allowed:
+    prompt = [message for message in input if message.role == "user"][-1].text
+    if "Private question" in prompt:
+        return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 0.5})
+    if "Private question" in str([message.model_dump() for message in input]):
+        leaks.append(input)
+    if "send a message" in prompt:
+        arguments = {"message": "Please honor."}
+    elif "You are the proposer" in prompt:
         arguments = {"action": "propose", "probability_you_bear": 0.5, "transfer": 20}
-    elif "accept" in allowed:
+    elif "You are the responder" in prompt:
         arguments = {"action": "accept"}
     else:
         arguments = {"action": "honor"}
@@ -58,3 +53,24 @@ def test_model_plays_a_pair_of_contract_episodes_against_the_rational_bot():
         seats = sample.scores["contract_seat_scorer"].value
         assert "a_belief" in seats and "a_comprehension" in seats
     assert leaks == []  # probes never enter the conversation
+
+
+def test_the_tools_never_change_within_a_contract_conversation():
+    from test_task import same_tools_throughout
+
+    [log] = eval(
+        contract_dynamics(
+            n_episodes=1,
+            a="model",
+            b="rational",
+            transfers="free",
+            shock_prob=1.0,
+            benefit_alpha=40.0,
+            benefit_beta=40.0,
+            persuasion_rounds=1,
+        ),
+        model_roles={"a": get_model("mockllm/model", custom_outputs=scripted_model)},
+        display="none",
+        log_dir="logs/tests",
+    )
+    same_tools_throughout(log)

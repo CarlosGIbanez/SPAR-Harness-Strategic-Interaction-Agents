@@ -6,7 +6,6 @@ converts to and from alpha's share.
 
 from typing import Any
 
-from inspect_ai.model import ChatMessage, Model
 from inspect_ai.tool import ToolInfo, ToolParams
 from inspect_ai.util import JSONSchema
 from pydantic import ValidationError
@@ -14,9 +13,9 @@ from pydantic import ValidationError
 from spar_harness.crisis_bargaining import expected_reservation_value
 from spar_harness.model_player import (
     SUBMIT_MOVE,
+    Ask,
     Presenter,
     ProbeResponse,
-    ask_probe,
     label,
 )
 from spar_harness.referee import InvalidMove
@@ -58,23 +57,16 @@ COMPREHENSION_QUESTION = (
 )
 
 
+ACTIONS = ["accept", "fight", "offer", "reject"]  # every action of the game
+
+
 async def probes(
-    model: Model,
-    messages: list[ChatMessage],
-    me: PlayerId,
-    observation: Observation,
-    context: PhaseContext,
+    ask: Ask, me: PlayerId, observation: Observation, context: PhaseContext
 ) -> list[ProbeResponse]:
     """The comprehension probe, once, right after the briefing."""
     if observation.briefing is None:
         return []
-    answer = await ask_probe(
-        model,
-        messages,
-        COMPREHENSION_QUESTION,
-        "fight_payoff",
-        "Your expected payoff from a fight.",
-    )
+    answer = await ask(COMPREHENSION_QUESTION)
     return [
         ProbeResponse(
             player=me,
@@ -86,18 +78,21 @@ async def probes(
 
 
 def submit_move_tool(context: PhaseContext) -> ToolInfo:
-    """The tool schema for this phase: only the actions and talk that are open."""
-    allowed = sorted(context.allowed_actions)
+    """The same schema for the whole episode: every action, plus the talk the
+    treatments open. The options for the current phase are stated in the text."""
     properties = {
-        "action": JSONSchema(type="string", enum=allowed, description="Your action."),
-    }
-    if "offer" in allowed:
-        properties["own_share"] = JSONSchema(
+        "action": JSONSchema(
+            type="string",
+            enum=ACTIONS,
+            description="Your action: one of the options listed for your current move.",
+        ),
+        "own_share": JSONSchema(
             type="number",
             minimum=0,
             maximum=1,
             description="If you make an offer: the share of the stake you keep.",
-        )
+        ),
+    }
     if "message" in context.talk_fields:
         properties["message"] = JSONSchema(
             type="string",
@@ -175,7 +170,10 @@ def render_observation(
         lines += _render_briefing(me, observation.briefing)
     for move in observation.opponent_moves:
         lines.append(f"Your opponent played: {_render_move(me, move)}.")
-    lines.append(f"Round {context.round}. You are the {context.role}.")
+    options = ", ".join(sorted(context.allowed_actions))
+    lines.append(
+        f"Round {context.round}. You are the {context.role}. Your options: {options}."
+    )
     return "\n".join(lines)
 
 

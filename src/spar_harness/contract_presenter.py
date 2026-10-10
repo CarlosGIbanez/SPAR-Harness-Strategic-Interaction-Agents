@@ -7,12 +7,11 @@ to and from the probability that alpha bears it.
 
 from typing import Any
 
-from inspect_ai.model import ChatMessage, Model
 from inspect_ai.tool import ToolInfo, ToolParams
 from inspect_ai.util import JSONSchema
 from pydantic import ValidationError
 
-from spar_harness.model_player import SUBMIT_MOVE, Presenter, ProbeResponse, ask_probe
+from spar_harness.model_player import SUBMIT_MOVE, Ask, Presenter, ProbeResponse
 from spar_harness.referee import InvalidMove
 from spar_harness.schema import (
     Action,
@@ -56,31 +55,22 @@ COMPREHENSION_QUESTION = (
 )
 
 
+ACTIONS = ["accept", "honor", "propose", "reject", "renege", "walk_away"]
+
+
 async def probes(
-    model: Model,
-    messages: list[ChatMessage],
-    me: PlayerId,
-    observation: Observation,
-    context: PhaseContext,
+    ask: Ask, me: PlayerId, observation: Observation, context: PhaseContext
 ) -> list[ProbeResponse]:
     """Belief before each response to an offer; comprehension before the decision."""
     if context.action_kind == "response":
-        answer = await ask_probe(
-            model, messages, BELIEF_QUESTION, "probability", "Probability they honor."
-        )
+        answer = await ask(BELIEF_QUESTION)
         return [
             ProbeResponse(
                 player=me, probe_id="belief", answer=answer, ground_truth=None
             )
         ]
     if context.action_kind == "decision":
-        answer = await ask_probe(
-            model,
-            messages,
-            COMPREHENSION_QUESTION,
-            "payoff",
-            "Your payoff if you renege.",
-        )
+        answer = await ask(COMPREHENSION_QUESTION)
         return [
             ProbeResponse(
                 player=me, probe_id="comprehension", answer=answer, ground_truth=None
@@ -90,39 +80,40 @@ async def probes(
 
 
 def submit_move_tool(context: PhaseContext) -> ToolInfo:
-    """The tool schema for this phase: only the actions and talk that are open."""
-    allowed = sorted(context.allowed_actions)
-    if not allowed:  # a persuasion message
-        return ToolInfo(
-            name=SUBMIT_MOVE,
-            description="Send your message.",
-            parameters=ToolParams(
-                properties={
-                    "message": JSONSchema(type="string", description="Your message.")
-                },
-                required=["message"],
-            ),
-        )
+    """The same schema for the whole episode: every action, plus the talk the
+    treatments open. The options for the current move are stated in the text."""
     properties = {
-        "action": JSONSchema(type="string", enum=allowed, description="Your action."),
-    }
-    if "propose" in allowed:
-        properties["probability_you_bear"] = JSONSchema(
+        "action": JSONSchema(
+            type="string",
+            enum=ACTIONS,
+            description=(
+                "Your action: one of the options listed for your current move. "
+                "Leave it out when you are asked only for a message."
+            ),
+        ),
+        "probability_you_bear": JSONSchema(
             type="number",
             minimum=0,
             maximum=1,
             description="If you propose: the probability that you are the bearer.",
-        )
-        properties["transfer"] = JSONSchema(
+        ),
+        "transfer": JSONSchema(
             type="number",
             minimum=0,
             description="If you propose: what the other pays the bearer on honoring.",
-        )
-    if "message" in context.talk_fields:
-        properties["message"] = JSONSchema(
+        ),
+        "message": JSONSchema(
             type="string",
-            description="Optional message your opponent reads with your move.",
-        )
+            description=(
+                "Your message, when you are asked for one in a persuasion round"
+                + (
+                    ", or alongside a bargaining move."
+                    if "message" in context.talk_fields
+                    else "."
+                )
+            ),
+        ),
+    }
     if "declared_action" in context.talk_fields:
         properties["promise"] = JSONSchema(
             type="string",
@@ -132,7 +123,7 @@ def submit_move_tool(context: PhaseContext) -> ToolInfo:
     return ToolInfo(
         name=SUBMIT_MOVE,
         description="Submit your move.",
-        parameters=ToolParams(properties=properties, required=["action"]),
+        parameters=ToolParams(properties=properties, required=[]),
     )
 
 
@@ -272,11 +263,18 @@ def _render_action(me: PlayerId, action: Action) -> str:
 
 def _render_task(context: PhaseContext) -> str:
     if context.action_kind == "decision":
-        return "You are the bearer. Decide now: honor or renege."
+        return "You are the bearer. Decide now. Your options: honor, renege."
     if context.action_kind == "message":
         target = "the bearer" if context.role == "other" else "the other player"
-        return f"Persuasion round {context.round}: send a message to {target}."
-    return f"Bargaining round {context.round}. You are the {context.role}."
+        return (
+            f"Persuasion round {context.round}: send a message to {target}. "
+            "Submit only a message, with no action."
+        )
+    options = ", ".join(sorted(context.allowed_actions))
+    return (
+        f"Bargaining round {context.round}. You are the {context.role}. "
+        f"Your options: {options}."
+    )
 
 
 CONTRACT_PRESENTER = Presenter(

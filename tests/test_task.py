@@ -8,15 +8,22 @@ from spar_harness.task import crisis_bargaining
 probe_leaks = []
 
 
+def last_user_text(input):
+    """What the mock reads to decide, like a real model: the latest prompt."""
+    return [message for message in input if message.role == "user"][-1].text
+
+
+def is_probe(input):
+    return "private question" in last_user_text(input).lower()
+
+
 def scripted_model(input, tools, tool_choice, config):
     """Answers the probe, offers itself 0.6 when proposing, and accepts otherwise."""
-    names = [tool.name for tool in tools]
-    if "answer_probe" in names:
-        return ModelOutput.for_tool_call("mock", "answer_probe", {"fight_payoff": 0.4})
+    if is_probe(input):
+        return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 0.4})
     if "private question" in str([message.model_dump() for message in input]):
         probe_leaks.append(input)
-    allowed = tools[0].parameters.properties["action"].enum
-    if "offer" in allowed:
+    if "You are the proposer" in last_user_text(input):
         return ModelOutput.for_tool_call(
             "mock", "submit_move", {"action": "offer", "own_share": 0.6}
         )
@@ -53,13 +60,9 @@ def test_model_recovers_from_an_invalid_move_with_a_well_formed_conversation():
             answered = following is not None and following.role == "tool"
             if getattr(message, "tool_calls", None) and not answered:
                 malformed_problems.append(message)
-        names = [tool.name for tool in tools]
-        if "answer_probe" in names:
-            return ModelOutput.for_tool_call(
-                "mock", "answer_probe", {"fight_payoff": 0.4}
-            )
-        allowed = tools[0].parameters.properties["action"].enum
-        if "offer" in allowed:
+        if is_probe(input):
+            return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 0.4})
+        if "You are the proposer" in last_user_text(input):
             if not fumbled:
                 fumbled.append(True)
                 return ModelOutput.for_tool_call(
@@ -103,3 +106,66 @@ def test_undefined_measures_are_left_out_of_the_averages():
     # bots answer no probes and declare no actions: undefined, not zero
     assert math.isnan(metrics["a_comprehension"])
     assert math.isnan(metrics["b_intention_gap"])
+
+
+def same_tools_throughout(log):
+    """Signed reasoning is bound to the tools list it was created with, so every
+    model call in an episode must send exactly the same tools."""
+    for sample in log.samples:
+        tool_lists = [
+            [tool.model_dump() for tool in event.tools]
+            for event in sample.events
+            if event.event == "model"
+        ]
+        assert len(tool_lists) > 1
+        assert all(tools == tool_lists[0] for tools in tool_lists), sample.id
+
+
+def test_the_tools_never_change_within_a_conversation():
+    [log] = eval(
+        crisis_bargaining(n_episodes=1, a="model", b="equilibrium", messages=True),
+        model_roles={"a": get_model("mockllm/model", custom_outputs=scripted_model)},
+        display="none",
+        log_dir="logs/tests",
+    )
+    same_tools_throughout(log)
+
+
+def test_a_stray_probe_call_next_to_a_valid_move_is_ignored():
+    from inspect_ai.model import ChatMessageAssistant
+    from inspect_ai.tool import ToolCall
+
+    tool_results = []
+
+    def model_with_stray_call(input, tools, tool_choice, config):
+        tool_results.extend(m for m in input if m.role == "tool")
+        if is_probe(input):
+            return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 0.4})
+        arguments = (
+            {"action": "offer", "own_share": 0.6}
+            if "You are the proposer" in last_user_text(input)
+            else {"action": "accept"}
+        )
+        message = ChatMessageAssistant(
+            content="",
+            tool_calls=[
+                ToolCall(id="move", function="submit_move", arguments=arguments),
+                ToolCall(id="stray", function="answer_probe", arguments={}),
+            ],
+        )
+        return ModelOutput.from_message(message)
+
+    [log] = eval(
+        crisis_bargaining(n_episodes=1, a="model", b="equilibrium"),
+        model_roles={
+            "a": get_model("mockllm/model", custom_outputs=model_with_stray_call)
+        },
+        display="none",
+        log_dir="logs/tests",
+    )
+    assert log.status == "success"
+    for result in tool_results:  # no move was rejected, and results are labeled right
+        if result.function == "submit_move":
+            assert result.text == "Move received."
+        else:
+            assert result.function == "answer_probe" and "Ignored" in result.text

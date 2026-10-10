@@ -34,10 +34,22 @@ class ProbeResponse(BaseModel):
     ground_truth: float | None  # None if only known after the episode
 
 
+# Asks a private numeric question on a copy of the conversation.
+Ask = Callable[[str], Awaitable[float | None]]
 Probes = Callable[
-    [Model, list[ChatMessage], PlayerId, Observation, PhaseContext],
-    Awaitable[list[ProbeResponse]],
+    [Ask, PlayerId, Observation, PhaseContext], Awaitable[list[ProbeResponse]]
 ]
+
+# Signed reasoning is bound to the tools list it was created with, so a
+# conversation must offer exactly the same tools on every call, probes included.
+ANSWER_PROBE_TOOL = ToolInfo(
+    name=ANSWER_PROBE,
+    description="Answer a private question. Use it only when asked a private question.",
+    parameters=ToolParams(
+        properties={"answer": JSONSchema(type="number", description="Your answer.")},
+        required=["answer"],
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -46,7 +58,9 @@ class Presenter:
 
     system_prompt: str  # may contain {tool}
     render: Callable[[PlayerId, Observation, PhaseContext], str]
-    tool: Callable[[PhaseContext], ToolInfo]  # the submit_move schema for a phase
+    # The submit_move schema. It must not depend on the phase, only on the
+    # episode's treatments: the current options are stated in the rendered text.
+    tool: Callable[[PhaseContext], ToolInfo]
     parse: Callable[[PlayerId, dict[str, Any]], Move]  # raises InvalidMove
     probes: Probes  # private side calls made before the move
 
@@ -55,32 +69,38 @@ def model_player(
     model: Model, probe_log: list[ProbeResponse], presenter: Presenter
 ) -> Player:
     messages: list[ChatMessage] = []
-    pending_tool_call_ids: list[str] = []
+    pending_tool_calls: list[tuple[str, str]] = []  # (id, function) awaiting a result
     last_contract: ContractState | None = None  # only new contract news is shown
+    tools: list[ToolInfo] = []  # fixed on the first call, then never changed
 
     async def play(observation: Observation, context: PhaseContext) -> Move:
         nonlocal last_contract
         me = observation.recipient
+        if not tools:
+            tools.extend([presenter.tool(context), ANSWER_PROBE_TOOL])
         if observation.briefing is not None:
             messages.append(
                 ChatMessageSystem(
                     content=presenter.system_prompt.format(tool=SUBMIT_MOVE)
                 )
             )
-        feedback = context.error or "Move received."
-        for tool_call_id in pending_tool_call_ids:
+        for tool_call_id, function in pending_tool_calls:
+            if function == SUBMIT_MOVE:
+                feedback = context.error or "Move received."
+            else:
+                feedback = f"Ignored: {function} is only for private questions."
             messages.append(
                 ChatMessageTool(
-                    content=feedback, tool_call_id=tool_call_id, function=SUBMIT_MOVE
+                    content=feedback, tool_call_id=tool_call_id, function=function
                 )
             )
-        if context.error and not pending_tool_call_ids:
+        if context.error and not pending_tool_calls:
             messages.append(
                 ChatMessageUser(
                     content=f"{context.error} Call {SUBMIT_MOVE} exactly once."
                 )
             )
-        pending_tool_call_ids.clear()
+        pending_tool_calls.clear()
         if context.error is None:
             if observation.contract == last_contract:
                 shown = observation.model_copy(update={"contract": None})
@@ -90,46 +110,38 @@ def model_player(
             messages.append(
                 ChatMessageUser(content=presenter.render(me, shown, context))
             )
-            probe_log.extend(
-                await presenter.probes(model, messages, me, observation, context)
-            )
 
-        output = await model.generate(messages, tools=[presenter.tool(context)])
+            async def ask(question: str) -> float | None:
+                return await ask_probe(model, messages, tools, question)
+
+            probe_log.extend(await presenter.probes(ask, me, observation, context))
+
+        output = await model.generate(messages, tools=tools)
         messages.append(output.message)
         tool_calls = output.message.tool_calls or []
-        pending_tool_call_ids.extend(call.id for call in tool_calls)
-        if len(tool_calls) != 1 or tool_calls[0].function != SUBMIT_MOVE:
+        pending_tool_calls.extend((call.id, call.function) for call in tool_calls)
+        moves = [call for call in tool_calls if call.function == SUBMIT_MOVE]
+        if len(moves) != 1:  # stray answer_probe calls are ignored, not fatal
             raise InvalidMove(f"You must call {SUBMIT_MOVE} exactly once.")
-        return presenter.parse(me, tool_calls[0].arguments)
+        return presenter.parse(me, moves[0].arguments)
 
     return play
 
 
 async def ask_probe(
-    model: Model,
-    messages: list[ChatMessage],
-    question: str,
-    field: str,
-    description: str,
+    model: Model, messages: list[ChatMessage], tools: list[ToolInfo], question: str
 ) -> float | None:
     """Ask a private numeric question on a copy of the conversation.
 
-    The copy is discarded, so the probe never enters the conversation.
+    The copy is discarded, so the probe never enters the conversation. The
+    conversation's own tools are offered, unchanged.
     """
-    tool = ToolInfo(
-        name=ANSWER_PROBE,
-        description="Answer the private question.",
-        parameters=ToolParams(
-            properties={field: JSONSchema(type="number", description=description)},
-            required=[field],
-        ),
-    )
     prompt = ChatMessageUser(
         content=f"{question} Answer by calling the {ANSWER_PROBE} tool."
     )
-    output = await model.generate([*messages, prompt], tools=[tool])
+    output = await model.generate([*messages, prompt], tools=tools)
     for call in output.message.tool_calls or []:
-        value = call.arguments.get(field)
+        value = call.arguments.get("answer")
         if call.function == ANSWER_PROBE and isinstance(value, int | float):
             return float(value)
     return None
