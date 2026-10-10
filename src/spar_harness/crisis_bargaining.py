@@ -6,14 +6,17 @@ from spar_harness.schema import (
     Briefing,
     Choice,
     Ending,
+    EpisodeConfig,
     EpisodeState,
     GameSpec,
     Move,
     Offer,
+    PartialType,
     PhaseContext,
     PhaseSpec,
     PlayerId,
     PrivateType,
+    StageSpec,
     TerminationSpec,
     UniformPrior,
 )
@@ -67,14 +70,25 @@ def crisis_bargaining_game(
     """Alternating offers: each round the proposer offers and the responder answers."""
     return GameSpec(
         game_id="crisis_bargaining",
-        phases=[
-            PhaseSpec(kind="act", actors="proposer", action_kind="offer"),
-            PhaseSpec(kind="act", actors="responder", action_kind="response"),
+        stages=[
+            StageSpec(
+                name="bargaining",
+                phases=[
+                    PhaseSpec(kind="act", actors="proposer", action_kind="offer"),
+                    PhaseSpec(kind="act", actors="responder", action_kind="response"),
+                ],
+                termination=TerminationSpec(max_rounds=max_rounds, stop_prob=stop_prob),
+                when_exhausted="horizon",
+            )
         ],
-        proposer_rule="alternate",
-        termination=TerminationSpec(max_rounds=max_rounds, stop_prob=stop_prob),
         status_quo=status_quo,
     )
+
+
+ALLOWED_ACTIONS = {
+    "offer": {"offer", "fight"},
+    "response": {"accept", "reject", "fight"},
+}
 
 
 def ending_after_move(move: Move) -> Ending | None:
@@ -104,6 +118,23 @@ def default_move(
         if record.proposer == player and own_move and own_move.action.kind == "offer":
             return own_move
     return Move(action=Offer(split=game.status_quo))
+
+
+def briefing(config: EpisodeConfig, state: EpisodeState, player: PlayerId) -> Briefing:
+    """What a player is told before its first move."""
+    opponent = "beta" if player == "alpha" else "alpha"
+    private_info = config.treatments.private_info
+    private_fields = private_info.private_fields if private_info else set()
+    public_opponent_type = state.types[opponent].model_dump(exclude=private_fields)
+    stage = config.game.stages[0]
+    return Briefing(
+        own_type=state.types[player],
+        opponent_type=PartialType(**public_opponent_type),
+        opponent_prior=config.priors[opponent] if private_info else None,
+        private_fields=private_fields,
+        status_quo=config.game.status_quo,
+        termination=stage.termination if config.treatments.horizon.known else None,
+    )
 
 
 def expected_reservation_value(player: PlayerId, briefing: Briefing) -> float:

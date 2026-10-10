@@ -21,8 +21,15 @@ from inspect_ai.scorer import (
 )
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 
-from spar_harness.bots import equilibrium_bot, random_bot
+from spar_harness.bots import (
+    equilibrium_bot,
+    random_bot,
+    rational_contract_bot,
+    scripted_contract_bot,
+)
+from spar_harness.contract_presenter import CONTRACT_PRESENTER
 from spar_harness.crisis_bargaining import crisis_bargaining_game
+from spar_harness.crisis_presenter import CRISIS_PRESENTER
 from spar_harness.measures import outcome_measures, player_measures
 from spar_harness.model_player import ProbeResponse, model_player
 from spar_harness.referee import Player, run_episode
@@ -39,7 +46,16 @@ from spar_harness.schema import (
     UniformPrior,
 )
 
-Controller = Literal["model", "equilibrium", "random"]
+Controller = Literal[
+    "model",
+    # crisis bargaining bots
+    "equilibrium",
+    "random",
+    # contract dynamics bots
+    "rational",
+    "always_honor",
+    "always_renege",
+]
 Seat = Literal["a", "b"]
 
 COMPREHENSION_TOLERANCE = 0.01
@@ -127,10 +143,16 @@ def referee() -> Solver:
         config = EpisodeConfig.model_validate(state.metadata["config"])
         seats: dict[PlayerId, Seat] = state.metadata["seats"]
         controllers: dict[Seat, Controller] = state.metadata["controllers"]
+        appeal: str = state.metadata.get("appeal", "")
         probes: list[ProbeResponse] = []
         players = {
             player: _player(
-                controllers[seats[player]], seats[player], config.seed, player, probes
+                controllers[seats[player]],
+                seats[player],
+                config,
+                player,
+                probes,
+                appeal,
             )
             for player in ("alpha", "beta")
         }
@@ -143,18 +165,31 @@ def referee() -> Solver:
     return solve
 
 
+PRESENTERS = {
+    "crisis_bargaining": CRISIS_PRESENTER,
+    "contract_dynamics": CONTRACT_PRESENTER,
+}
+
+
 def _player(
     controller: Controller,
     seat: Seat,
-    seed: int,
+    config: EpisodeConfig,
     position: PlayerId,
     probes: list[ProbeResponse],
+    appeal: str,
 ) -> Player:
     if controller == "model":
-        return model_player(get_model(role=seat), probes)
+        presenter = PRESENTERS[config.game.game_id]
+        return model_player(get_model(role=seat), probes, presenter)
     if controller == "equilibrium":
         return equilibrium_bot()
-    return random_bot(seed=2 * seed + (0 if position == "alpha" else 1))
+    if controller == "random":
+        return random_bot(seed=2 * config.seed + (0 if position == "alpha" else 1))
+    if controller == "rational":
+        return rational_contract_bot()
+    decision = "honor" if controller == "always_honor" else "renege"
+    return scripted_contract_bot(decision, appeal)
 
 
 def _transcript(episode: EpisodeState) -> str:
@@ -162,8 +197,8 @@ def _transcript(episode: EpisodeState) -> str:
     lines = []
     for record in episode.rounds:
         for player, move in record.moves.items():
-            role = "proposer" if player == record.proposer else "responder"
-            line = f"Round {record.round}, {player} ({role}): {move.model_dump_json(exclude_none=True)}"
+            move_json = move.model_dump_json(exclude_none=True)
+            line = f"{record.stage} round {record.round}, {player}: {move_json}"
             if player in record.defaulted:
                 line += " [default move]"
             lines.append(line)

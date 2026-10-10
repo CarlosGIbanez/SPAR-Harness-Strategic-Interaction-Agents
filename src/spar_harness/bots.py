@@ -3,16 +3,27 @@
 import bisect
 import itertools
 import random
+from typing import Literal
 
+from spar_harness.contract_dynamics import (
+    contract_value,
+    credible_transfers,
+    deal_exists,
+    equal_gains_share,
+    temptation,
+)
 from spar_harness.crisis_bargaining import (
     expected_reservation_value,
     possible_opponent_types,
     reservation_against,
 )
-from spar_harness.referee import ALLOWED_ACTIONS, Player
+from spar_harness.referee import Player
 from spar_harness.schema import (
     Briefing,
     Choice,
+    ContractBriefing,
+    ContractOffer,
+    ContractParams,
     Move,
     Observation,
     Offer,
@@ -23,6 +34,7 @@ from spar_harness.schema import (
 )
 
 TOLERANCE = 1e-9  # so that offering exactly the reservation value is accepted
+TRANSFER_GRID = 101  # transfers the rational contract bot considers
 
 
 def random_bot(seed: int) -> Player:
@@ -30,7 +42,7 @@ def random_bot(seed: int) -> Player:
     rng = random.Random(seed)
 
     async def play(observation: Observation, context: PhaseContext) -> Move:
-        kind = rng.choice(sorted(ALLOWED_ACTIONS[context.action_kind]))
+        kind = rng.choice(sorted(context.allowed_actions))
         if kind == "offer":
             return Move(action=Offer(split=rng.random()))
         return Move(action=Choice(kind=kind))
@@ -119,3 +131,79 @@ def _risk_return_share(
 
 def _other(player: PlayerId) -> PlayerId:
     return "beta" if player == "alpha" else "alpha"
+
+
+def rational_contract_bot() -> Player:
+    """The theory benchmark for contract dynamics.
+
+    Proposer: walks away if no deal exists; otherwise proposes the credible
+    contract that maximizes the smaller side's value (the cheapest transfer on
+    ties). Responder: signs iff the contract is worth more than nothing, assuming
+    the bearer honors exactly when its temptation is at most zero, and otherwise
+    walks away. Bearer: honors iff its temptation is at most zero. It sends no
+    messages.
+    """
+    briefing: ContractBriefing | None = None
+
+    async def play(observation: Observation, context: PhaseContext) -> Move:
+        nonlocal briefing
+        if observation.briefing is not None:
+            briefing = observation.briefing
+        params = briefing.params
+        me = observation.recipient
+        if context.action_kind == "message":
+            return Move(message="")
+        if context.action_kind == "decision":
+            honors = temptation(params, observation.contract.transfer) <= 0
+            return Move(action=Choice(kind="honor" if honors else "renege"))
+        if context.role == "proposer":
+            offer = _best_credible_contract(params)
+            return Move(action=offer if offer else Choice(kind="walk_away"))
+        offer = observation.opponent_moves[-1].action
+        value = contract_value(
+            me,
+            params,
+            offer.alpha_bears_prob,
+            offer.transfer,
+            bearer_honors=temptation(params, offer.transfer) <= 0,
+        )
+        return Move(action=Choice(kind="accept" if value > TOLERANCE else "walk_away"))
+
+    return play
+
+
+def _best_credible_contract(params: ContractParams) -> ContractOffer | None:
+    if not deal_exists(params):
+        return None
+    low, high = credible_transfers(params)
+    best, best_value = None, 0.0
+    for i in range(TRANSFER_GRID):
+        transfer = low + (high - low) * i / (TRANSFER_GRID - 1)
+        q = equal_gains_share(params, transfer)
+        smaller_value = min(
+            contract_value(side, params, q, transfer, bearer_honors=True)
+            for side in ("alpha", "beta")
+        )
+        if smaller_value > best_value + TOLERANCE:
+            best = ContractOffer(alpha_bears_prob=q, transfer=transfer)
+            best_value = smaller_value
+    return best
+
+
+def scripted_contract_bot(
+    decision: Literal["honor", "renege"], appeal: str = ""
+) -> Player:
+    """A fixed counterparty: proposes the fair coin without transfer, signs any
+    offer, sends `appeal` in every persuasion round, and as bearer always makes
+    `decision`."""
+
+    async def play(observation: Observation, context: PhaseContext) -> Move:
+        if context.action_kind == "message":
+            return Move(message=appeal if context.role == "other" else "")
+        if context.action_kind == "decision":
+            return Move(action=Choice(kind=decision))
+        if context.role == "proposer":
+            return Move(action=ContractOffer(alpha_bears_prob=0.5, transfer=0.0))
+        return Move(action=Choice(kind="accept"))
+
+    return play

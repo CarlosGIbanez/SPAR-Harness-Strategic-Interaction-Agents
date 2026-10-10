@@ -1,22 +1,29 @@
-"""The referee: runs one episode of any game described by a GameSpec."""
+"""The referee: runs one episode of any game described by a GameSpec.
+
+A game is a sequence of stages. Each stage repeats its phase list for up to
+max_rounds rounds. Everything game-specific is looked up in the plugin dicts
+below, keyed by game_id.
+"""
 
 import random
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
-from spar_harness import crisis_bargaining
+from spar_harness import contract_dynamics, crisis_bargaining
 from spar_harness.priors import draw_types
 from spar_harness.schema import (
     Briefing,
     Ending,
     EpisodeConfig,
     EpisodeState,
+    GameSpec,
     Move,
     Observation,
-    PartialType,
     PhaseContext,
+    PhaseSpec,
     PlayerId,
     RoundRecord,
+    StageSpec,
     TalkField,
     TypeField,
 )
@@ -30,40 +37,87 @@ Player = Callable[[Observation, PhaseContext], Awaitable[Move]]
 
 MAX_RETRIES = 2
 TALK_FIELDS: tuple[TalkField, ...] = ("message", "declared_action", "declared_type")
-ALLOWED_ACTIONS = {
-    "offer": {"offer", "fight"},
-    "response": {"accept", "reject", "fight"},
-}
 
-ENDING_RULES = {"crisis_bargaining": crisis_bargaining.ending_after_move}
-PAYOFF_MODELS = {"crisis_bargaining": crisis_bargaining.episode_payoffs}
-DEFAULT_MOVES = {"crisis_bargaining": crisis_bargaining.default_move}
+# Game plugins. Each maps a game_id to a function or table.
+ALLOWED_ACTIONS = {
+    "crisis_bargaining": crisis_bargaining.ALLOWED_ACTIONS,
+    "contract_dynamics": contract_dynamics.ALLOWED_ACTIONS,
+}
+BRIEFINGS = {
+    "crisis_bargaining": crisis_bargaining.briefing,
+    "contract_dynamics": contract_dynamics.briefing,
+}
+ENDING_RULES = {
+    "crisis_bargaining": crisis_bargaining.ending_after_move,
+    "contract_dynamics": contract_dynamics.ending_after_move,
+}
+PAYOFF_MODELS = {
+    "crisis_bargaining": crisis_bargaining.episode_payoffs,
+    "contract_dynamics": contract_dynamics.episode_payoffs,
+}
+DEFAULT_MOVES = {
+    "crisis_bargaining": crisis_bargaining.default_move,
+    "contract_dynamics": contract_dynamics.default_move,
+}
+# nature's moves before each stage; games without any are absent
+BEFORE_STAGE = {"contract_dynamics": contract_dynamics.before_stage}
+# game-specific rules a move must satisfy; they return a problem or None
+MOVE_CHECKS = {"contract_dynamics": contract_dynamics.move_problem}
+# players for roles other than proposer and responder
+ACTOR_RULES = {"contract_dynamics": contract_dynamics.actor_for}
+
+StageOutcome = Ending | Literal["next_stage"] | None
 
 
 async def run_episode(
     config: EpisodeConfig, players: dict[PlayerId, Player]
 ) -> EpisodeState:
     game = config.game
-    state = EpisodeState(types=draw_types(config.priors, config.seed))
+    types = draw_types(config.priors, config.seed) if config.priors else {}
+    state = EpisodeState(types=types)
+    nature_rng = random.Random(f"nature-{config.seed}")
     stop_rng = random.Random(f"random_stop-{config.seed}")
     inbox: dict[PlayerId, list[Move]] = {"alpha": [], "beta": []}
     briefings = {
-        player: _briefing(config, state, player) for player in ("alpha", "beta")
+        player: BRIEFINGS[game.game_id](config, state, player)
+        for player in ("alpha", "beta")
     }
-    max_rounds = game.termination.max_rounds
-    for round_number in range(1, max_rounds + 1):
-        state.ending = await _play_round(
-            config, players, state, inbox, briefings, round_number
+    for stage in game.stages:
+        before_stage = BEFORE_STAGE.get(game.game_id)
+        if before_stage is not None:
+            state.ending = before_stage(game, state, stage, nature_rng)
+            if state.ending is not None:
+                break
+        outcome = await _play_stage(
+            config, players, state, inbox, briefings, stage, stop_rng
         )
-        if state.ending is not None:
+        if outcome != "next_stage":
+            state.ending = outcome
             break
-        if round_number < max_rounds and stop_rng.random() < game.termination.stop_prob:
-            state.ending = "random_stop"
-            break
-    else:
-        state.ending = "horizon"
     state.payoffs = PAYOFF_MODELS[game.game_id](game, state)
     return state
+
+
+async def _play_stage(
+    config: EpisodeConfig,
+    players: dict[PlayerId, Player],
+    state: EpisodeState,
+    inbox: dict[PlayerId, list[Move]],
+    briefings: dict[PlayerId, Briefing],
+    stage: StageSpec,
+    stop_rng: random.Random,
+) -> StageOutcome:
+    max_rounds = stage.termination.max_rounds
+    for round_number in range(1, max_rounds + 1):
+        outcome = await _play_round(
+            config, players, state, inbox, briefings, stage, round_number
+        )
+        if outcome is not None:
+            return outcome
+        more_rounds = round_number < max_rounds
+        if more_rounds and stop_rng.random() < stage.termination.stop_prob:
+            return "random_stop"
+    return stage.when_exhausted
 
 
 async def _play_round(
@@ -72,18 +126,24 @@ async def _play_round(
     state: EpisodeState,
     inbox: dict[PlayerId, list[Move]],
     briefings: dict[PlayerId, Briefing],
+    stage: StageSpec,
     round_number: int,
-) -> Ending | None:
+) -> StageOutcome:
     game = config.game
-    proposer = _proposer(game.proposer_rule, round_number)
-    record = RoundRecord(round=round_number, proposer=proposer)
+    proposer = _proposer(stage.proposer_rule, round_number)
+    record = RoundRecord(
+        stage=stage.name,
+        round=round_number,
+        proposer=proposer if _has_offers(stage) else None,
+    )
     state.rounds.append(record)
-    for phase in game.phases:
-        player = proposer if phase.actors == "proposer" else _opponent(proposer)
+    for phase in stage.phases:
+        player = _actor(game.game_id, phase, proposer, state)
         context = PhaseContext(
             round=round_number,
             role=phase.actors,
             action_kind=phase.action_kind,
+            allowed_actions=ALLOWED_ACTIONS[game.game_id][phase.action_kind],
             talk_fields=_talk_fields(config),
             declarable_fields=_private_fields(config),
         )
@@ -92,22 +152,23 @@ async def _play_round(
             round=round_number,
             briefing=briefings.pop(player, None),
             opponent_moves=inbox[player],
+            contract=state.contract.model_copy() if state.contract else None,
         )
         inbox[player] = []
-        move = await _request_move(players[player], observation, context)
+        move = await _request_move(game, players[player], observation, context)
         if move is None:
             move = DEFAULT_MOVES[game.game_id](game, state, player, context)
             record.defaulted.add(player)
         record.moves[player] = move
         inbox[_opponent(player)].append(move)
-        ending = ENDING_RULES[game.game_id](move)
-        if ending is not None:
-            return ending
+        outcome = ENDING_RULES[game.game_id](move)
+        if outcome is not None:
+            return outcome
     return None
 
 
 async def _request_move(
-    player: Player, observation: Observation, context: PhaseContext
+    game: GameSpec, player: Player, observation: Observation, context: PhaseContext
 ) -> Move | None:
     """Ask for a move, retrying with the reason whenever it is invalid.
 
@@ -116,7 +177,7 @@ async def _request_move(
     for _ in range(1 + MAX_RETRIES):
         try:
             move = await player(observation, context)
-            _validate(move, context)
+            _validate(game, move, context)
             return move
         except InvalidMove as invalid:
             # A retry carries no new information, only the reason.
@@ -127,27 +188,40 @@ async def _request_move(
     return None
 
 
-def _validate(move: Move, context: PhaseContext) -> None:
-    allowed = ALLOWED_ACTIONS[context.action_kind]
-    if move.action.kind not in allowed:
+def _validate(game: GameSpec, move: Move, context: PhaseContext) -> None:
+    allowed = context.allowed_actions
+    if move.action is None:
+        if allowed:
+            raise InvalidMove(
+                f"an action is required; choose one of: {_listed(allowed)}"
+            )
+    elif move.action.kind not in allowed:
         raise InvalidMove(
             f"'{move.action.kind}' is not allowed for the {context.role}; "
-            f"choose one of: {', '.join(sorted(allowed))}"
+            f"choose one of: {_listed(allowed)}"
         )
     used_talk = {field for field in TALK_FIELDS if getattr(move, field) is not None}
-    closed = used_talk - context.talk_fields
+    # In a message phase (no actions) the message is the move itself.
+    open_talk = context.talk_fields | (set() if allowed else {"message"})
+    closed = used_talk - open_talk
     if closed:
-        raise InvalidMove(
-            f"these fields are not available: {', '.join(sorted(closed))}"
-        )
+        raise InvalidMove(f"these fields are not available: {_listed(closed)}")
     if move.declared_type is not None:
         claimed = set(move.declared_type.model_dump(exclude_none=True))
         undeclarable = claimed - context.declarable_fields
         if undeclarable:
             raise InvalidMove(
                 f"a declared type may only claim private fields, not: "
-                f"{', '.join(sorted(undeclarable))}"
+                f"{_listed(undeclarable)}"
             )
+    move_check = MOVE_CHECKS.get(game.game_id)
+    problem = move_check(game, move) if move_check else None
+    if problem is not None:
+        raise InvalidMove(problem)
+
+
+def _listed(names: set[str]) -> str:
+    return ", ".join(sorted(names))
 
 
 def _talk_fields(config: EpisodeConfig) -> set[TalkField]:
@@ -167,21 +241,18 @@ def _private_fields(config: EpisodeConfig) -> set[TypeField]:
     return private_info.private_fields if private_info else set()
 
 
-def _briefing(config: EpisodeConfig, state: EpisodeState, player: PlayerId) -> Briefing:
-    opponent = _opponent(player)
-    private_info = config.treatments.private_info
-    private_fields = _private_fields(config)
-    public_opponent_type = state.types[opponent].model_dump(exclude=private_fields)
-    return Briefing(
-        own_type=state.types[player],
-        opponent_type=PartialType(**public_opponent_type),
-        opponent_prior=config.priors[opponent] if private_info else None,
-        private_fields=private_fields,
-        status_quo=config.game.status_quo,
-        termination=config.game.termination
-        if config.treatments.horizon.known
-        else None,
-    )
+def _has_offers(stage: StageSpec) -> bool:
+    return any(phase.actors in ("proposer", "responder") for phase in stage.phases)
+
+
+def _actor(
+    game_id: str, phase: PhaseSpec, proposer: PlayerId, state: EpisodeState
+) -> PlayerId:
+    if phase.actors == "proposer":
+        return proposer
+    if phase.actors == "responder":
+        return _opponent(proposer)
+    return ACTOR_RULES[game_id](phase.actors, state)
 
 
 def _proposer(
