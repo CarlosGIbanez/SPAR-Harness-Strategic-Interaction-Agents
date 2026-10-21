@@ -130,10 +130,15 @@ class TalkTreatment(BaseModel):
     declared_type: bool
 
 
+class NoiseTreatment(BaseModel):
+    rate: float = Field(ge=0.0, le=1.0)  # chance that a move is carried out wrong
+
+
 class Treatments(BaseModel):
     horizon: HorizonTreatment
     private_info: PrivateInfoTreatment | None = None
     talk: TalkTreatment | None = None
+    noise: NoiseTreatment | None = None  # needs the game's NOISE rule
 
 
 class EpisodeConfig(BaseModel):
@@ -210,6 +215,8 @@ class RoundRecord(BaseModel):
     moves: dict[PlayerId, Move] = {}
     defaulted: set[PlayerId] = set()  # players whose move the referee made for them
     reports: dict[PlayerId, Report] = {}  # what each player was told at the end
+    # moves that noise changed; every other move was executed as chosen
+    executed: dict[PlayerId, Move] = {}
 
 
 class RoundEnd(BaseModel):
