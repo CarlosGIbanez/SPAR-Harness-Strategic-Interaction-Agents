@@ -48,7 +48,7 @@ flowchart TB
 | `priors.py` | Seeded type drawing | `draw_types` |
 | `referee.py` | The general stage engine | `run_episode`, `Player`, `InvalidMove`, the plugin dicts |
 | `bots.py` | Scripted players for both games | `equilibrium_bot`, `random_bot`, `rational_contract_bot`, `scripted_contract_bot` |
-| `model_player.py` | Game-agnostic adapter from an Inspect `Model` to a `Player`: conversation, the fixed tools list, retries, side-call probes | `model_player`, `Presenter`, `ProbeResponse`, `Ask`, `ask_probe`, `ANSWER_PROBE_TOOL` |
+| `model_player.py` | Game-agnostic adapter from an Inspect `Model` to a `Player`: conversation, the fixed tools list, retries, side-call probes | `model_player`, `Presenter`, `ProbeResponse`, `Ask`, `ask_probe`, `ANSWER_PROBE_TOOL`, `ANSWER_WITH_CHOICE_TOOL` |
 | `crisis_presenter.py`, `contract_presenter.py` | How each game is shown to a model | `CRISIS_PRESENTER`, `CONTRACT_PRESENTER` |
 | `measures.py` | Per-episode measures for both games, computed from an `EpisodeState` | `outcome_measures`, `player_measures`, `contract_outcome_measures`, `contract_player_measures` |
 | `task.py` | The crisis bargaining task and its scorers, plus the shared solver, reducer and metric | `crisis_bargaining`, `referee`, `mean_of_defined`, `mean_of_defined_reducer`, `Controller`, `PRESENTERS` |
@@ -473,10 +473,14 @@ sequenceDiagram
     M-->>MP: assistant message with a submit_move tool call
     MP->>PR: parse(me, arguments)
     PR-->>MP: Move, or raise InvalidMove
+    MP->>PR: after_move(ask, me, observation, context), if the presenter has it
+    PR->>M: ask(question) - on a COPY of messages + the move's tool results, nothing new shown
+    M-->>PR: answer_probe(answer)
+    PR-->>MP: ProbeResponses, added to probe_log
     MP-->>R: Move
 ```
 
-A `Presenter` is a frozen dataclass of five plain values:
+A `Presenter` is a frozen dataclass of five plain values, plus two optional ones:
 
 | Field | Crisis bargaining | Contract dynamics |
 |---|---|---|
@@ -485,10 +489,14 @@ A `Presenter` is a frozen dataclass of five plain values:
 | `tool` | One schema for the whole episode: every action (`accept`, `fight`, `offer`, `reject`), `own_share`, plus the talk and `declared_*` fields the treatments open | One schema for the whole episode: every action, `probability_you_bear`, `transfer`, `message` (always, for persuasion), plus `promise` when open. `action` is optional because message phases have none |
 | `parse` | `own_share` to alpha's `split` | `probability_you_bear` to `alpha_bears_prob`; `promise` to `declared_action` |
 | `probes(ask, me, observation, context)` | Comprehension (own expected fight payoff), once after the briefing, with its ground truth | Belief ($\pi$) before each response to an offer; comprehension (own payoff from reneging) before the decision. The ground truth is computed later, in the scorer |
+| `after_move` (optional, default none) | (none) | (none) |
+| `answer_tool` (default `ANSWER_PROBE_TOOL`) | the default | the default |
+
+**Three ways to ask.** The `ask` a probe receives is callable: `await ask(question)` asks on a copy of the conversation and returns a number. `ask.choice(question, options)` also returns the option the model picked; it needs `ANSWER_WITH_CHOICE_TOOL` as the presenter's answer tool. `ask.fresh(question)` asks in a new conversation, with no role and no game history and only the answer tool. Probes in `after_move` ask on a copy where the move's tool calls are already answered, as if the move were accepted, before the player is shown anything new. The model player stamps every answer with the round of its move.
 
 Two rules about tools, each checked by a test:
 
-- **One tools list per conversation.** The list is `[submit_move, answer_probe]`, computed on the first call and then reused for every move and every probe. Models with extended thinking return signed reasoning that is bound to the tools list it was created with, so changing the list mid-conversation makes the API reject the request (ADR 0001, amended). The current options are therefore stated in the rendered text (for example, "Your options: offer, fight."), not in the schema, and the referee rejects anything that isn't open.
+- **One tools list per conversation.** The list is `[submit_move, answer_probe]` (the presenter's `answer_tool`), computed on the first call and then reused for every move and every probe. Models with extended thinking return signed reasoning that is bound to the tools list it was created with, so changing the list mid-conversation makes the API reject the request (ADR 0001, amended). The current options are therefore stated in the rendered text (for example, "Your options: offer, fight."), not in the schema, and the referee rejects anything that isn't open.
 - **Every tool call gets a matching tool result** before the next generate, labeled with the right function. A stray `answer_probe` call made alongside a move is answered with "Ignored" and doesn't invalidate the move.
 
 ## 7. The Inspect shell (`task.py`, `contract_task.py`)
