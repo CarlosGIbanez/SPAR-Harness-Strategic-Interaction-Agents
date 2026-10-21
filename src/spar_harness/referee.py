@@ -71,6 +71,10 @@ ACTOR_RULES = {"contract_dynamics": contract_dynamics.actor_for}
 # what happens once every phase of a round is played: private reports to
 # each player, and endings that depend on the game's state
 AFTER_ROUND: dict[str, Callable[[GameSpec, EpisodeState, RoundRecord], RoundEnd]] = {}
+# how a chosen move comes out when the noise treatment hits it
+NOISE: dict[
+    str, Callable[[GameSpec, EpisodeState, PlayerId, Move, random.Random], Move]
+] = {}
 
 StageOutcome = Ending | Literal["next_stage"] | None
 
@@ -158,10 +162,18 @@ async def _play_round(
                 for p in actors
             )
         )
-        for player, move in zip(actors, moves):
-            record.moves[player] = move
-            inbox[_opponent(player)].append(move)
-        for move in moves:
+        # The opponent and the rules see the executed move; the record keeps
+        # the chosen one too, for measures of intent.
+        executed = [
+            _executed(config, state, record, player, move)
+            for player, move in zip(actors, moves)
+        ]
+        for player, chosen, done in zip(actors, moves, executed):
+            record.moves[player] = chosen
+            if done != chosen:
+                record.executed[player] = done
+            inbox[_opponent(player)].append(done)
+        for move in executed:
             outcome = ENDING_RULES[game.game_id](move)
             if outcome is not None:
                 return outcome
@@ -211,6 +223,29 @@ async def _phase_move(
         move = DEFAULT_MOVES[game.game_id](game, state, player, context)
         record.defaulted.add(player)
     return move
+
+
+def _executed(
+    config: EpisodeConfig,
+    state: EpisodeState,
+    record: RoundRecord,
+    player: PlayerId,
+    move: Move,
+) -> Move:
+    """The move as carried out: the chosen move, unless the noise treatment hits.
+
+    Each move draws from its own seeded stream, so the draws never depend on
+    the order of moves, and both episodes of a pair get the same accidents.
+    Default moves are the referee's, so noise never touches them.
+    """
+    noise = config.treatments.noise
+    misfire = NOISE.get(config.game.game_id)
+    if noise is None or misfire is None or player in record.defaulted:
+        return move
+    rng = random.Random(f"noise-{config.seed}-{record.stage}-{record.round}-{player}")
+    if rng.random() >= noise.rate:
+        return move
+    return misfire(config.game, state, player, move, rng)
 
 
 async def _request_move(

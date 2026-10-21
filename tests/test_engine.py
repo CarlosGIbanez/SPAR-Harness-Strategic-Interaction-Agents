@@ -17,6 +17,7 @@ from spar_harness.schema import (
     GameSpec,
     HorizonTreatment,
     Move,
+    NoiseTreatment,
     Offer,
     PhaseSpec,
     RoundEnd,
@@ -214,3 +215,96 @@ def test_reports_survive_the_episode_record_round_trip(toy, monkeypatch):
     state = run(toy(max_rounds=1), alpha=offering(0.3), beta=offering(0.8))
     stored = EpisodeState.model_validate(state.model_dump(mode="json"))
     assert stored.rounds[0].reports == state.rounds[0].reports
+
+
+FULL = Move(action=Offer(split=1.0))
+
+
+def misfire_to_full(game, state, player, move, rng):
+    """In the toy game an order that misfires becomes the full split."""
+    return FULL
+
+
+def noisy(toy, rate, **options):
+    return toy(
+        treatments=Treatments(
+            horizon=HorizonTreatment(known=True), noise=NoiseTreatment(rate=rate)
+        ),
+        **options,
+    )
+
+
+def test_without_noise_every_move_is_executed_as_chosen(toy, monkeypatch):
+    monkeypatch.setitem(referee.NOISE, TOY, misfire_to_full)
+    for config in (toy(), noisy(toy, 0.0)):
+        state = run(config, alpha=offering(0.3), beta=offering(0.8))
+        assert all(record.executed == {} for record in state.rounds)
+
+
+def test_at_rate_one_every_order_misfires_and_the_opponent_sees_the_result(
+    toy, monkeypatch
+):
+    monkeypatch.setitem(referee.NOISE, TOY, misfire_to_full)
+    beta_log = []
+    state = run(
+        noisy(toy, 1.0, max_rounds=2),
+        alpha=offering(0.3),
+        beta=offering(0.8, beta_log),
+    )
+    first = state.rounds[0]
+    assert first.moves["alpha"] == Move(action=Offer(split=0.3))  # chosen, for intent
+    assert first.executed == {"alpha": FULL, "beta": FULL}
+    assert beta_log[1][0].opponent_moves == [FULL]
+    stored = EpisodeState.model_validate(state.model_dump(mode="json"))
+    assert stored.rounds[0].executed == first.executed
+
+
+def test_both_episodes_of_a_role_swapped_pair_get_the_same_accidents(toy, monkeypatch):
+    monkeypatch.setitem(referee.NOISE, TOY, misfire_to_full)
+    config = noisy(toy, 0.5, max_rounds=10, seed=7)
+    first = run(config, alpha=offering(0.3), beta=offering(0.8))
+    swapped = run(config, alpha=offering(0.8), beta=offering(0.3))
+    accidents = [set(record.executed) for record in first.rounds]
+    assert accidents == [set(record.executed) for record in swapped.rounds]
+    assert set() in accidents and any(accidents)  # some rounds misfire, some don't
+
+
+def test_only_the_player_whose_order_misfired_is_told(toy, monkeypatch):
+    def alpha_only(game, state, player, move, rng):
+        return FULL if player == "alpha" else move  # an unchanged move is no accident
+
+    def accident_reports(game, state, record):
+        return RoundEnd(
+            reports={p: {"misfired": p in record.executed} for p in ("alpha", "beta")}
+        )
+
+    monkeypatch.setitem(referee.NOISE, TOY, alpha_only)
+    monkeypatch.setitem(referee.AFTER_ROUND, TOY, accident_reports)
+    state = run(noisy(toy, 1.0, max_rounds=1), alpha=offering(0.3), beta=offering(0.8))
+    assert state.rounds[0].executed == {"alpha": FULL}
+    assert state.rounds[0].reports == {
+        "alpha": {"misfired": True},
+        "beta": {"misfired": False},
+    }
+
+
+def test_noise_never_touches_a_default_move(toy, monkeypatch):
+    monkeypatch.setitem(referee.NOISE, TOY, misfire_to_full)
+    state = run(noisy(toy, 1.0, max_rounds=1), alpha=broken([]), beta=offering(0.8))
+    assert state.rounds[0].defaulted == {"alpha"}
+    assert state.rounds[0].executed == {"beta": FULL}
+
+
+def test_one_players_accidents_do_not_depend_on_the_other_players_moves(
+    toy, monkeypatch
+):
+    monkeypatch.setitem(referee.NOISE, TOY, misfire_to_full)
+    config = noisy(toy, 0.5, max_rounds=10, seed=3)
+    steady = run(config, alpha=offering(0.3), beta=offering(0.8))
+    flaky = run(config, alpha=broken([]), beta=offering(0.8))  # alpha only defaults
+
+    def beta_accidents(state):
+        return ["beta" in record.executed for record in state.rounds]
+
+    assert beta_accidents(steady) == beta_accidents(flaky)
+    assert any(beta_accidents(steady)) and not all(beta_accidents(steady))
