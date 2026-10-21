@@ -86,7 +86,7 @@ class Move(BaseModel):
 
 
 GameId = Literal["crisis_bargaining", "contract_dynamics"]
-Role = Literal["proposer", "responder", "bearer", "other"]
+Role = Literal["proposer", "responder", "bearer", "other", "both"]
 ActionKind = Literal["offer", "response", "message", "decision"]
 
 

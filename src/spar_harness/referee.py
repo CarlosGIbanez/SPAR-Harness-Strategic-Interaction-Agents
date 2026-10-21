@@ -5,6 +5,7 @@ max_rounds rounds. Everything game-specific is looked up in the plugin dicts
 below, keyed by game_id.
 """
 
+import asyncio
 import random
 from collections.abc import Awaitable, Callable
 from typing import Literal
@@ -138,33 +139,58 @@ async def _play_round(
     )
     state.rounds.append(record)
     for phase in stage.phases:
-        player = _actor(game.game_id, phase, proposer, state)
-        context = PhaseContext(
-            round=round_number,
-            role=phase.actors,
-            action_kind=phase.action_kind,
-            allowed_actions=ALLOWED_ACTIONS[game.game_id][phase.action_kind],
-            talk_fields=_talk_fields(config),
-            declarable_fields=_private_fields(config),
+        actors = _actors(game.game_id, phase, proposer, state)
+        # Simultaneous movers are asked together: each observation is built
+        # before any move of the phase is in, so neither sees the other's.
+        moves = await asyncio.gather(
+            *(
+                _phase_move(config, players, state, inbox, briefings, phase, record, p)
+                for p in actors
+            )
         )
-        observation = Observation(
-            recipient=player,
-            round=round_number,
-            briefing=briefings.pop(player, None),
-            opponent_moves=inbox[player],
-            contract=state.contract.model_copy() if state.contract else None,
-        )
-        inbox[player] = []
-        move = await _request_move(game, players[player], observation, context)
-        if move is None:
-            move = DEFAULT_MOVES[game.game_id](game, state, player, context)
-            record.defaulted.add(player)
-        record.moves[player] = move
-        inbox[_opponent(player)].append(move)
-        outcome = ENDING_RULES[game.game_id](move)
-        if outcome is not None:
-            return outcome
+        for player, move in zip(actors, moves):
+            record.moves[player] = move
+            inbox[_opponent(player)].append(move)
+        for move in moves:
+            outcome = ENDING_RULES[game.game_id](move)
+            if outcome is not None:
+                return outcome
     return None
+
+
+async def _phase_move(
+    config: EpisodeConfig,
+    players: dict[PlayerId, Player],
+    state: EpisodeState,
+    inbox: dict[PlayerId, list[Move]],
+    briefings: dict[PlayerId, Briefing],
+    phase: PhaseSpec,
+    record: RoundRecord,
+    player: PlayerId,
+) -> Move:
+    """One player's move in a phase: a valid move, or the game's default."""
+    game = config.game
+    context = PhaseContext(
+        round=record.round,
+        role=phase.actors,
+        action_kind=phase.action_kind,
+        allowed_actions=ALLOWED_ACTIONS[game.game_id][phase.action_kind],
+        talk_fields=_talk_fields(config),
+        declarable_fields=_private_fields(config),
+    )
+    observation = Observation(
+        recipient=player,
+        round=record.round,
+        briefing=briefings.pop(player, None),
+        opponent_moves=inbox[player],
+        contract=state.contract.model_copy() if state.contract else None,
+    )
+    inbox[player] = []
+    move = await _request_move(game, players[player], observation, context)
+    if move is None:
+        move = DEFAULT_MOVES[game.game_id](game, state, player, context)
+        record.defaulted.add(player)
+    return move
 
 
 async def _request_move(
@@ -243,6 +269,14 @@ def _private_fields(config: EpisodeConfig) -> set[TypeField]:
 
 def _has_offers(stage: StageSpec) -> bool:
     return any(phase.actors in ("proposer", "responder") for phase in stage.phases)
+
+
+def _actors(
+    game_id: str, phase: PhaseSpec, proposer: PlayerId, state: EpisodeState
+) -> list[PlayerId]:
+    if phase.actors == "both":
+        return ["alpha", "beta"]
+    return [_actor(game_id, phase, proposer, state)]
 
 
 def _actor(

@@ -119,7 +119,7 @@ classDiagram
     }
     class PhaseSpec {
         +kind: "act"
-        +actors: proposer | responder | bearer | other
+        +actors: proposer | responder | bearer | other | both
         +action_kind: offer | response | message | decision
     }
     class TerminationSpec {
@@ -257,7 +257,7 @@ The following mental models are worth keeping in mind:
 
 **Type aliases:**
 - `PlayerId`: `alpha` / `beta`.
-- `Role`: `proposer` / `responder` / `bearer` / `other`.
+- `Role`: `proposer` / `responder` / `bearer` / `other` / `both`.
 - `ActionKind`: `offer` / `response` / `message` / `decision`.
 - `TypeField`: `capability` / `cost_of_conflict`.
 - `TalkField`: `message` / `declared_action` / `declared_type`.
@@ -294,6 +294,7 @@ There are three separate seeded streams, so changing one kind of draw never shif
 ```mermaid
 flowchart LR
     phase["phase.actors"] --> pr{"proposer or responder?"}
+    pr -- "both" --> p0["alpha and beta, asked at once"]
     pr -- "proposer" --> p1["_proposer(stage.proposer_rule, round)"]
     pr -- "responder" --> p2["the proposer's opponent"]
     pr -- "anything else" --> p3["ACTOR_RULES[game_id](role, state)<br/>contract: bearer = state.contract.bearer<br/>other = the bearer's opponent"]
@@ -315,6 +316,8 @@ sequenceDiagram
     R->>R: push the Move into O's inbox
     R->>R: ENDING_RULES - an Ending, next_stage, or continue
 ```
+
+In a phase with `actors="both"`, the referee asks both players at once. Each observation is built before any move of the phase is in, so neither player sees the other's move until the next phase or round; both moves then enter the inboxes together, and `ENDING_RULES` runs once both are in, alpha's move first. Retries and default moves work per player, so a player that fails doesn't hold up the other.
 
 In contract dynamics, the bearer's decision is the last move of the episode. It goes into the other player's inbox, but that inbox is never delivered, so the other player never sees the decision.
 
@@ -571,11 +574,13 @@ The probe-based measures are computed in the task modules:
 4. Write a presenter and add it to `PRESENTERS` in `task.py`.
 5. Write a task module with its scorers.
 
-Still missing from the engine: simultaneous moves (`actors="both"`), which the divisible contract arm will need.
+**Simultaneous moves.** Give a phase `actors="both"` (section 4.3). The divisible contract arm can use it.
 
 ## 10. Tests
 
 Each game has six agreed seams. Only the last touches Inspect, and it uses the `mockllm` model, so the suite never calls a real API.
+
+Engine features that no real game uses yet, such as simultaneous moves, are tested in `test_engine.py` with a toy game that is registered in the plugin dicts only for those tests.
 
 | Seam | Crisis bargaining | Contract dynamics | Checks |
 |---|---|---|---|
