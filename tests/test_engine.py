@@ -13,11 +13,13 @@ from spar_harness import referee
 from spar_harness.referee import InvalidMove, run_episode
 from spar_harness.schema import (
     EpisodeConfig,
+    EpisodeState,
     GameSpec,
     HorizonTreatment,
     Move,
     Offer,
     PhaseSpec,
+    RoundEnd,
     StageSpec,
     TerminationSpec,
     Treatments,
@@ -143,3 +145,72 @@ def test_the_ending_rule_runs_once_both_simultaneous_moves_are_in(toy, monkeypat
     assert state.ending == "fight"
     assert len(state.rounds) == 1
     assert state.rounds[0].moves["beta"] == Move(action=Offer(split=0.2))
+
+
+def secret_reports(game, state, record):
+    """Tells each player the round and its own secret, and nothing else."""
+    return RoundEnd(
+        reports={
+            player: {"round": record.round, "secret": player.upper()}
+            for player in ("alpha", "beta")
+        }
+    )
+
+
+def test_each_report_reaches_only_its_player_before_its_next_move(toy, monkeypatch):
+    monkeypatch.setitem(referee.AFTER_ROUND, TOY, secret_reports)
+    alpha_log, beta_log = [], []
+    state = run(
+        toy(max_rounds=2), alpha=offering(0.3, alpha_log), beta=offering(0.8, beta_log)
+    )
+    assert alpha_log[0][0].reports == [] and beta_log[0][0].reports == []
+    assert alpha_log[1][0].reports == [{"round": 1, "secret": "ALPHA"}]
+    assert beta_log[1][0].reports == [{"round": 1, "secret": "BETA"}]
+    assert state.rounds[0].reports == {
+        "alpha": {"round": 1, "secret": "ALPHA"},
+        "beta": {"round": 1, "secret": "BETA"},
+    }
+
+
+def test_reports_wait_for_a_player_who_does_not_move_every_round(toy, monkeypatch):
+    monkeypatch.setitem(referee.AFTER_ROUND, TOY, secret_reports)
+    proposer = PhaseSpec(kind="act", actors="proposer", action_kind="offer")
+    alpha_log = []
+    run(
+        toy(phases=[proposer], max_rounds=3),
+        alpha=offering(0.3, alpha_log),
+        beta=offering(0.8),
+    )
+    # the proposer alternates: alpha moves in rounds 1 and 3, so in round 3 it
+    # hears about rounds 1 and 2
+    assert [observation.reports for observation, _ in alpha_log] == [
+        [],
+        [{"round": 1, "secret": "ALPHA"}, {"round": 2, "secret": "ALPHA"}],
+    ]
+
+
+def test_without_a_round_end_rule_players_get_no_reports(toy):
+    alpha_log = []
+    state = run(toy(max_rounds=2), alpha=offering(0.3, alpha_log), beta=offering(0.8))
+    assert [observation.reports for observation, _ in alpha_log] == [[], []]
+    assert state.rounds[0].reports == {}
+
+
+def test_a_round_end_rule_can_end_the_episode_on_the_game_state(toy, monkeypatch):
+    def ends_when_offers_add_up(game, state, record):
+        total = sum(
+            move.action.split for done in state.rounds for move in done.moves.values()
+        )
+        return RoundEnd(outcome="fight" if total >= 1.5 else None)
+
+    monkeypatch.setitem(referee.AFTER_ROUND, TOY, ends_when_offers_add_up)
+    state = run(toy(max_rounds=5), alpha=offering(0.4), beta=offering(0.4))
+    assert state.ending == "fight"
+    assert len(state.rounds) == 2  # 0.8 after round 1, 1.6 after round 2
+
+
+def test_reports_survive_the_episode_record_round_trip(toy, monkeypatch):
+    monkeypatch.setitem(referee.AFTER_ROUND, TOY, secret_reports)
+    state = run(toy(max_rounds=1), alpha=offering(0.3), beta=offering(0.8))
+    stored = EpisodeState.model_validate(state.model_dump(mode="json"))
+    assert stored.rounds[0].reports == state.rounds[0].reports

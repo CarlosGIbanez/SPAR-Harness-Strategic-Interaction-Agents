@@ -173,6 +173,11 @@ class ContractState(BaseModel):
     bearer: PlayerId | None = None
 
 
+# What one player privately learns when a round ends. The game that sends it
+# defines the keys, and its presenter renders them.
+Report = dict[str, str | int | float | bool | None]
+
+
 class Observation(BaseModel):
     """What one player learns before making a move."""
 
@@ -181,6 +186,7 @@ class Observation(BaseModel):
     briefing: Briefing | ContractBriefing | None = None  # only on the first move
     contract: ContractState | None = None  # contract dynamics, once signed
     opponent_moves: list[Move] = []  # since the recipient's last move
+    reports: list[Report] = []  # end-of-round reports since the recipient's last move
 
 
 class PhaseContext(BaseModel):
@@ -203,6 +209,14 @@ class RoundRecord(BaseModel):
     proposer: PlayerId | None = None  # None in stages without offers
     moves: dict[PlayerId, Move] = {}
     defaulted: set[PlayerId] = set()  # players whose move the referee made for them
+    reports: dict[PlayerId, Report] = {}  # what each player was told at the end
+
+
+class RoundEnd(BaseModel):
+    """What a game's end-of-round rule decides once every phase is played."""
+
+    reports: dict[PlayerId, Report] = {}  # each goes only to its player
+    outcome: Ending | Literal["next_stage"] | None = None  # None: play on
 
 
 class EpisodeState(BaseModel):
