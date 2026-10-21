@@ -196,6 +196,32 @@ Every metric is a mean over the episodes where it's **defined**. For example, `i
 
 Per-player metrics are reported by **seat** (`a_...`, `b_...`), not by alpha/beta, so they stay tied to the same model across the pair.
 
+## Pilot and analysis scripts
+
+`scripts/pilot.py` runs the contract dynamics pilot grid: the neutral setting with forced shocks, at severities 1.2, 1.5 and 1.8, with transfers `none` and `free`, and one model against the rational bot and in self-play. Before launching, it estimates tokens and dollars by playing every cell with a scripted stand-in model, which costs nothing.
+
+```bash
+# Estimate (no API calls). Claude prices are built in; pass prices for other models.
+uv run python scripts/pilot.py estimate --model anthropic/claude-haiku-5-5
+uv run python scripts/pilot.py estimate --model openai-api/<provider>/<model> --price-in 0 --price-out 0
+
+# Launch: shows the estimate, refuses if the upper estimate is over --budget, then asks.
+uv run python scripts/pilot.py run --model anthropic/claude-haiku-5-5 --budget 2
+
+# Optional arms: imposed venture (contract effect), unequal benefits (fairness), K
+uv run python scripts/pilot.py estimate --model ... --imposed --benefits 28 10 --persuasion 0 2
+```
+
+The estimate gives a range: one stand-in signs the first proposal, the other rejects until the last round. Input dollars assume no prompt caching. Output tokens per call are an assumption (`--visible-tokens`, `--reasoning-tokens`). It prints a row for the spend log.
+
+`scripts/analyze_pilot.py` reads every episode in a log directory and writes `report.md`, CSV tables and figures (the figures need `--group analysis`):
+
+```bash
+uv run --group analysis python scripts/analyze_pilot.py logs/pilot
+```
+
+It covers honoring against τ, with Wilson intervals and a logistic fit; the contract effect (signed minus imposed, at the same τ); the fairness split, plus how contracts shared the risk; persuasion by K, with the persuader's belief; and actual usage and cost per log, to check against the estimate. Honoring counts only model bearers' non-default decisions. To smoke-test it for free, run `pilot.py estimate ... --keep-logs logs/dry` and analyze `logs/dry`.
+
 ## Development
 
 ```bash
