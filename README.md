@@ -205,6 +205,12 @@ Per-player metrics are reported by **seat** (`a_...`, `b_...`), not by alpha/bet
 uv run python scripts/pilot.py estimate --model anthropic/claude-haiku-5-5
 uv run python scripts/pilot.py estimate --model openai-api/<provider>/<model> --price-in 0 --price-out 0
 
+# An OpenAI-compatible endpoint whose URL and keys are in .env (here Dartmouth Chat:
+# OPENAI_BASE_URL and DARTMOUTH_API_KEY_1..3). List its models, then pick a key.
+uv run python scripts/pilot.py models --api-key-var DARTMOUTH_API_KEY_1
+uv run python scripts/pilot.py run --model openai-api/dartmouth/<model-id> \
+  --api-key-var DARTMOUTH_API_KEY_1 --price-in 0 --price-out 0
+
 # Launch: shows the estimate, refuses if the upper estimate is over --budget, then asks.
 uv run python scripts/pilot.py run --model anthropic/claude-haiku-5-5 --budget 2
 

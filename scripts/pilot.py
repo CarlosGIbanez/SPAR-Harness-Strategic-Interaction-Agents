@@ -9,6 +9,12 @@ transfer regime, with one model against the rational bot and in self-play.
     # Launch, after logging the estimate. Refuses if the estimate is over budget.
     uv run python scripts/pilot.py run --model anthropic/claude-sonnet-5-5 --budget 2
 
+    # An OpenAI-compatible endpoint, such as Dartmouth Chat: list its models,
+    # then run one with a chosen key from .env.
+    uv run python scripts/pilot.py models --api-key-var DARTMOUTH_API_KEY_1
+    uv run python scripts/pilot.py run --model openai-api/dartmouth/<model-id> \
+        --api-key-var DARTMOUTH_API_KEY_1 --price-in 0 --price-out 0
+
 The estimate plays every cell with a scripted stand-in model that counts the
 prompt it is sent, so call counts and conversation growth match the real
 harness. Two stand-ins bracket the real model: "quick" signs the first
@@ -20,15 +26,18 @@ it with the real usage that analyze_pilot.py reports after the run.
 
 import argparse
 import json
+import os
 import random
 import re
 import sys
 import tempfile
+import urllib.request
 import zlib
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import find_dotenv, load_dotenv
 from inspect_ai import eval, eval_set, task_with
 from inspect_ai.model import ChatMessage, ModelOutput, ModelUsage, get_model
 from inspect_ai.tool import ToolInfo
@@ -310,9 +319,9 @@ def run(args: argparse.Namespace) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=["estimate", "run"])
+    parser.add_argument("command", choices=["estimate", "run", "models"])
     parser.add_argument(
-        "--model", required=True, help="Inspect model, e.g. anthropic/claude-sonnet-5-5"
+        "--model", help="Inspect model, e.g. anthropic/claude-sonnet-5-5"
     )
     parser.add_argument(
         "--seeds",
@@ -348,6 +357,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=[18.0, 18.0],
         metavar=("ALPHA", "BETA"),
         help="unequal benefits are needed for the fairness split",
+    )
+    parser.add_argument(
+        "--api-key-var",
+        default="DARTMOUTH_API_KEY_1",
+        help="openai-api models: the .env variable holding the key",
+    )
+    parser.add_argument(
+        "--base-url-var",
+        default="OPENAI_BASE_URL",
+        help="openai-api models: the .env variable holding the base URL",
+    )
+    parser.add_argument(
+        "--service", default="dartmouth", help="models: the endpoint's name"
     )
     parser.add_argument(
         "--price-in", type=float, help="dollars per million input tokens"
@@ -388,9 +410,48 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def use_endpoint(args: argparse.Namespace) -> None:
+    """Point an openai-api/<service>/<model> at a key and base URL from .env.
+
+    Inspect reads <SERVICE>_API_KEY and <SERVICE>_BASE_URL. This copies the
+    variables named by --api-key-var and --base-url-var into those names, so
+    .env can hold several keys for one endpoint.
+    """
+    load_dotenv(find_dotenv(usecwd=True))  # the .env where you run it; set ones win
+    if args.command != "models" and not args.model.startswith("openai-api/"):
+        return
+    service = args.model.split("/")[1] if args.model else args.service
+    prefix = service.upper().replace("-", "_")
+    for suffix, var in (("API_KEY", args.api_key_var), ("BASE_URL", args.base_url_var)):
+        target = f"{prefix}_{suffix}"
+        if var in os.environ:
+            os.environ[target] = os.environ[var]
+        elif target not in os.environ:
+            sys.exit(f"Set {var} (or {target}) in .env.")
+    args.endpoint = prefix
+
+
+def list_models(args: argparse.Namespace) -> None:
+    """Print the model ids an OpenAI-compatible endpoint serves."""
+    base = os.environ[f"{args.endpoint}_BASE_URL"].rstrip("/")
+    key = os.environ[f"{args.endpoint}_API_KEY"]
+    request = urllib.request.Request(
+        f"{base}/models", headers={"Authorization": f"Bearer {key}"}
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        models = json.load(response).get("data", [])
+    for model in sorted(models, key=lambda m: m.get("id", "")):
+        print(f"openai-api/{args.endpoint.lower()}/{model.get('id')}")
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    if args.command == "estimate":
+    if args.command != "models" and not args.model:
+        sys.exit("--model is required.")
+    use_endpoint(args)
+    if args.command == "models":
+        list_models(args)
+    elif args.command == "estimate":
         result = estimate(args)
         print(json.dumps(result, indent=2) if args.json else "", end="")
         if not args.json:

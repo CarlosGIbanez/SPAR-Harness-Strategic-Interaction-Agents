@@ -93,3 +93,22 @@ def test_intervals_and_the_logistic_fit():
     assert fit["slope"] < 0 and fit["slope_low"] < fit["slope"] < fit["slope_high"]
     separated = analyze_pilot.logistic_fit([1, 2, 3, 4, 5], [0, 0, 1, 1, 1])
     assert separated is None
+
+
+def test_an_openai_compatible_endpoint_takes_the_chosen_key(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)  # no .env here
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.edu/api")
+    monkeypatch.setenv("DARTMOUTH_API_KEY_2", "second")
+    monkeypatch.delenv("DARTMOUTH_API_KEY", raising=False)
+    args = pilot.parse_args(
+        [
+            "run",
+            "--model",
+            "openai-api/dartmouth/m",
+            "--api-key-var",
+            "DARTMOUTH_API_KEY_2",
+        ]
+    )
+    pilot.use_endpoint(args)
+    assert pilot.os.environ["DARTMOUTH_API_KEY"] == "second"
+    assert pilot.os.environ["DARTMOUTH_BASE_URL"] == "https://example.edu/api"
