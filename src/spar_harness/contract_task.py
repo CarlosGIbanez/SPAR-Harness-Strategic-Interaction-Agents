@@ -21,6 +21,9 @@ from spar_harness.schema import (
     EpisodeState,
     HorizonTreatment,
     PlayerId,
+    PresentationTreatment,
+    PromptArm,
+    SettingId,
     TalkTreatment,
     Treatments,
 )
@@ -53,6 +56,9 @@ def contract_dynamics(
     messages: bool = False,
     promises: bool = False,
     appeal: str = "",  # what scripted bots say when they persuade
+    force_shock: bool = False,  # players are told shock_prob; every signed contract is shocked
+    setting: SettingId = "neutral",  # story framing; the numbers never change
+    prompt_arm: PromptArm = "none",  # ContractSim instruction arms
 ) -> Task:
     loss = severity * disaster
     cap = {"none": 0.0, "capped": transfer_cap, "free": loss}[transfers]
@@ -64,6 +70,7 @@ def contract_dynamics(
         penalty=penalty,
         transfer_cap=cap,
         imposed_venture=imposed_venture,
+        force_shock=force_shock,
     )
     game = contract_dynamics_game(
         params, max_rounds=max_rounds, persuasion_rounds=persuasion_rounds
@@ -73,7 +80,11 @@ def contract_dynamics(
         talk = TalkTreatment(
             messages=messages, declared_action=promises, declared_type=False
         )
-    treatments = Treatments(horizon=HorizonTreatment(known=True), talk=talk)
+    treatments = Treatments(
+        horizon=HorizonTreatment(known=True),
+        talk=talk,
+        presentation=PresentationTreatment(setting=setting, prompt_arm=prompt_arm),
+    )
     controllers = {"a": a, "b": b}
     samples = []
     for seed in range(n_episodes):
@@ -145,6 +156,9 @@ SEAT_MEASURES = [
     "comprehension",
     "belief",
     "belief_error",
+    "persuader_belief_first",
+    "persuader_belief_last",
+    "persuader_belief_shift",
 ]
 SEAT_KEYS = [f"{seat}_{measure}" for seat in ("a", "b") for measure in SEAT_MEASURES]
 
@@ -164,6 +178,7 @@ def contract_seat_scorer():
         for player, seat in seats.items():
             measures = by_player[player]
             belief = _mean_answer(probes, player, "belief")
+            persuader = _answers(probes, player, "persuader_belief")
             values |= {
                 f"{seat}_default_rate": measures.default_rate,
                 f"{seat}_promise_broken": measures.promise_broken,
@@ -176,22 +191,34 @@ def contract_seat_scorer():
                     if belief is not None and partner_honored[player] is not None
                     else None
                 ),
+                f"{seat}_persuader_belief_first": persuader[0] if persuader else None,
+                f"{seat}_persuader_belief_last": persuader[-1] if persuader else None,
+                f"{seat}_persuader_belief_shift": (
+                    persuader[-1] - persuader[0] if len(persuader) > 1 else None
+                ),
             }
         return Score(value=values)
 
     return score
 
 
-def _mean_answer(
+def _answers(
     probes: list[ProbeResponse], player: PlayerId, probe_id: str
-) -> float | None:
-    answers = [
+) -> list[float]:
+    """The player's usable answers to one probe, in the order they were asked."""
+    return [
         probe.answer
         for probe in probes
         if probe.player == player
         and probe.probe_id == probe_id
         and probe.answer is not None
     ]
+
+
+def _mean_answer(
+    probes: list[ProbeResponse], player: PlayerId, probe_id: str
+) -> float | None:
+    answers = _answers(probes, player, probe_id)
     return sum(answers) / len(answers) if answers else None
 
 

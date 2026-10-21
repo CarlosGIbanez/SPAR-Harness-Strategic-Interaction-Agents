@@ -219,10 +219,13 @@ def before_stage(
     else:
         signing_round = state.rounds[-1]
         terms = signing_round.moves[signing_round.proposer].action
+        # Always consume the draw, so a seed gives the same bearer draw whether
+        # or not the shock is forced.
+        drawn = rng.random() < game.contract.shock_prob
         state.contract = ContractState(
             alpha_bears_prob=terms.alpha_bears_prob,
             transfer=terms.transfer,
-            shock=rng.random() < game.contract.shock_prob,
+            shock=drawn or game.contract.force_shock,
         )
         if not state.contract.shock:
             return "no_shock"

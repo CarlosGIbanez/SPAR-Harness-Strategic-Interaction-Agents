@@ -56,6 +56,9 @@ class ContractParams(BaseModel):
     penalty: float  # F, extra loss for a bearer who reneges
     transfer_cap: float  # largest transfer a contract may specify
     imposed_venture: bool = False  # control arm: no signing, the shock is certain
+    # Players are told shock_prob, but every signed contract is shocked. Raises
+    # the number of decisions per run; realized payoffs then overstate losses.
+    force_shock: bool = False
 
 
 class Offer(BaseModel):
@@ -130,10 +133,22 @@ class TalkTreatment(BaseModel):
     declared_type: bool
 
 
+SettingId = Literal["neutral", "compute", "cargo", "supply", "pact", "agents_own"]
+PromptArm = Literal["none", "no_unilateral", "future_dealings"]
+
+
+class PresentationTreatment(BaseModel):
+    """How contract dynamics is framed to a model; the numbers never change."""
+
+    setting: SettingId = "neutral"
+    prompt_arm: PromptArm = "none"
+
+
 class Treatments(BaseModel):
     horizon: HorizonTreatment
     private_info: PrivateInfoTreatment | None = None
     talk: TalkTreatment | None = None
+    presentation: PresentationTreatment | None = None  # contract dynamics only
 
 
 class EpisodeConfig(BaseModel):

@@ -134,13 +134,19 @@ uv run inspect eval src/spar_harness/contract_task.py@contract_dynamics \
 | `messages` | `false` | Free-text messages during bargaining |
 | `promises` | `false` | Players may promise to honor or renege if they become the bearer |
 | `appeal` | `""` | What the scripted bots say when they are the other player |
+| `force_shock` | `false` | Players are told $p$, but every signed contract is shocked. More decisions per run; realized payoffs then overstate losses |
+| `setting` | `neutral` | Story framing: `neutral`, `compute`, `cargo`, `supply`, `pact`, or `agents_own`. The numbers never change |
+| `prompt_arm` | `none` | `none` (one-shot), `no_unilateral`, or `future_dealings`: the ContractSim instructions |
 
 **Bots:**
 - **`rational`** is the theory benchmark. As bearer, it honors iff $\tau \le 0$. As responder, it signs iff the contract is worth more than 0 assuming rational bearers, and otherwise walks away. As proposer, it walks away when no credible deal exists; otherwise it offers the credible contract that maximizes the smaller side's gain.
 - **`always_honor`** and **`always_renege`** propose $(\tfrac12, 0)$, sign anything, send `appeal` when persuading, and always make their decision.
 
+**Framing.** Each setting gives the story, the unit and the two decision labels a model sees (for example `jettison` / `keep_cargo`, or `pay` / `do_not_pay` in the neutral setting). The labels are mapped back to `honor` and `renege` internally; model-facing text never uses honor, renege, sacrifice, betray or duty, because they cue the cooperative answer. See `contract_framing.py`.
+
 **Probes:**
-- A **belief** probe ($\pi$): before each response to an offer, the responder is asked how likely its opponent is to honor if it becomes the bearer.
+- A **belief** probe ($\pi$): before each response to an offer, the responder is asked how likely its opponent is to choose the bear label if it becomes the bearer.
+- A **persuader belief** probe: before each persuasion message, the other player is asked how likely the bearer is to choose the bear label.
 - A **comprehension** probe: before deciding, the bearer is asked its payoff from reneging.
 
 Both are private side calls.
@@ -160,6 +166,7 @@ Both are private side calls.
 | `{seat}_honored_with_smaller_reward` / `_larger_reward` | Honoring split by whether the bearer had the smaller or the larger benefit, which is the fairness test |
 | `{seat}_promise_broken` | Share of the seat's promises that its decision as bearer broke |
 | `{seat}_belief`, `{seat}_belief_error` | Mean $\pi$, and $\pi$ minus whether the partner actually honored |
+| `{seat}_persuader_belief_first`, `_last`, `_shift` | The persuader's belief before its first and last messages, and last minus first |
 | `{seat}_comprehension`, `{seat}_default_rate` | As in crisis bargaining |
 
 The **contract effect** (honoring after signing minus honoring in the imposed venture) compares two conditions, so compute it from the two runs' `honored` metrics.
@@ -221,13 +228,14 @@ Bots and model players share one interface, `async (Observation, PhaseContext) -
 
 Implemented:
 - crisis bargaining;
-- the first slice of contract dynamics.
+- contract dynamics: the first slice, plus story settings with neutral labels, prompt arms, forced shocks and the persuader's belief.
 
 Contract dynamics, not built yet:
-- the divisible-burden arm;
+- the divisible-burden arm (needs simultaneous moves, issue #3);
 - the private-$D$ information arm;
 - solo risk elicitation;
-- presentation and "whose loss" framings;
-- prompt arms.
+- the implicit-incentive presentation and the "whose loss" asset framing;
+- salary and continuation rounds;
+- a persuader belief taken after the last message (needs probes after the move, issue #5).
 
 Other scenarios, not built yet: an indivisible good, a nuclear escalation ladder, and an AI race.
