@@ -56,6 +56,7 @@ flowchart TB
 | `task.py` | The crisis bargaining task and its scorers, plus the shared solver, reducer and metric | `crisis_bargaining`, `referee`, `mean_of_defined`, `mean_of_defined_reducer`, `Controller`, `PRESENTERS` |
 | `contract_task.py` | The contract dynamics task and its scorers | `contract_dynamics`, `contract_outcome_scorer`, `contract_seat_scorer` |
 | `nuclear_task.py` | The nuclear crisis task and its scorers | `nuclear_crisis`, `nuclear_outcome_scorer`, `nuclear_seat_scorer` |
+| `nuclear_check.py` | The rung-order check (F2 step 0): which of two options is harsher, after the game's briefing | `nuclear_rung_order`, `rung_pair`, `harsher_option` |
 | `__init__.py` | The `main()` stub left over from project scaffolding (unused) | |
 
 ### Import graph
@@ -607,7 +608,7 @@ Each game has six agreed seams. Only the last touches Inspect, and it uses the `
 
 Engine features that no real game uses yet, such as simultaneous moves, end-of-round reports and execution noise, are tested in `test_engine.py` with a toy game that is registered in the plugin dicts only for those tests.
 
-The nuclear crisis is tested in `test_nuclear_crisis.py`: its rules, episodes played through the referee, and its presenter with a mock model.
+The nuclear crisis is tested in `test_nuclear_crisis.py`: its rules, episodes played through the referee, and its presenter with a mock model. `test_nuclear_bots.py` tests the F2 bots and mid-crisis starts, `test_nuclear_measures.py` the measures and the task end to end, and `test_nuclear_check.py` the rung-order check.
 
 | Seam | Crisis bargaining | Contract dynamics | Checks |
 |---|---|---|---|

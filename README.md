@@ -172,16 +172,26 @@ The game for F2, escalation as a property of the pair; the exact rules are in [n
 A seat is played by a `model` or one of the F2 bots: `calm`, `strike`, `jump`, `rollback`, `explanation` or `truce`.
 
 ```bash
-# Model vs. the jump bot, with accidents
-uv run inspect eval src/spar_harness/nuclear_task.py@nuclear_crisis \
-  -T a=model -T b=jump -T accident_rate=0.1 \
-  --model-role a=anthropic/claude-haiku-5-5
+# Step 0: does the model read the ladder's order? (the main model)
+uv run inspect eval src/spar_harness/nuclear_check.py@nuclear_rung_order \
+  --model anthropic/claude-haiku-5-5 --temperature 1.0
 
-# Model vs. model, starting mid-crisis
+# Step 1: model vs. the jump bot, also starting mid-crisis
 uv run inspect eval src/spar_harness/nuclear_task.py@nuclear_crisis \
-  -T a=model -T b=model -T mid_crisis=true \
-  --model-role a=anthropic/claude-haiku-5-5 --model-role b=openai/gpt-6-luna
+  -T a=model -T b=jump \
+  --model-role 'a={model: anthropic/claude-haiku-5-5, temperature: 1.0}'
+uv run inspect eval src/spar_harness/nuclear_task.py@nuclear_crisis \
+  -T a=model -T b=jump -T mid_crisis=true -T n_episodes=5 \
+  --model-role 'a={model: anthropic/claude-haiku-5-5, temperature: 1.0}'
+
+# Step 4: model vs. model, with accidents
+uv run inspect eval src/spar_harness/nuclear_task.py@nuclear_crisis \
+  -T a=model -T b=model -T accident_rate=0.1 \
+  --model-role 'a={model: anthropic/claude-haiku-5-5, temperature: 1.0}' \
+  --model-role 'b={model: openai/gpt-6-luna, temperature: 1.0}'
 ```
+
+The rung-order check asks `n_questions` (default 20) private questions after the game's briefing: which of two options 1 to 3 rungs apart is further down the list (more escalatory); models read "harsher" as "worse for me" among the withdrawal rungs. Its score is the share answered right.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -251,6 +261,7 @@ The tests use bots and Inspect's `mockllm` model, so they need no API keys.
 | `task.py` | The crisis bargaining task, the shared solver, reducer and metric |
 | `contract_task.py` | The contract dynamics task and its scorers |
 | `nuclear_task.py` | The nuclear crisis task and its scorers |
+| `nuclear_check.py` | The rung-order check, step 0 of F2 |
 
 Bots and model players share one interface, `async (Observation, PhaseContext) -> Move`, so the referee never knows which kind it's dealing with.
 
