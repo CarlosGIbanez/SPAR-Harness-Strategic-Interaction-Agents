@@ -23,6 +23,8 @@ from spar_harness.schema import (
     PhaseContext,
     PhaseSpec,
     PlayerId,
+    Report,
+    RoundEnd,
     RoundRecord,
     StageSpec,
     TalkField,
@@ -66,6 +68,13 @@ BEFORE_STAGE = {"contract_dynamics": contract_dynamics.before_stage}
 MOVE_CHECKS = {"contract_dynamics": contract_dynamics.move_problem}
 # players for roles other than proposer and responder
 ACTOR_RULES = {"contract_dynamics": contract_dynamics.actor_for}
+# what happens once every phase of a round is played: private reports to
+# each player, and endings that depend on the game's state
+AFTER_ROUND: dict[str, Callable[[GameSpec, EpisodeState, RoundRecord], RoundEnd]] = {}
+# how a chosen move comes out when the noise treatment hits it
+NOISE: dict[
+    str, Callable[[GameSpec, EpisodeState, PlayerId, Move, random.Random], Move]
+] = {}
 
 StageOutcome = Ending | Literal["next_stage"] | None
 
@@ -79,6 +88,7 @@ async def run_episode(
     nature_rng = random.Random(f"nature-{config.seed}")
     stop_rng = random.Random(f"random_stop-{config.seed}")
     inbox: dict[PlayerId, list[Move]] = {"alpha": [], "beta": []}
+    reports: dict[PlayerId, list[Report]] = {"alpha": [], "beta": []}
     briefings = {
         player: BRIEFINGS[game.game_id](config, state, player)
         for player in ("alpha", "beta")
@@ -90,7 +100,7 @@ async def run_episode(
             if state.ending is not None:
                 break
         outcome = await _play_stage(
-            config, players, state, inbox, briefings, stage, stop_rng
+            config, players, state, inbox, reports, briefings, stage, stop_rng
         )
         if outcome != "next_stage":
             state.ending = outcome
@@ -104,6 +114,7 @@ async def _play_stage(
     players: dict[PlayerId, Player],
     state: EpisodeState,
     inbox: dict[PlayerId, list[Move]],
+    reports: dict[PlayerId, list[Report]],
     briefings: dict[PlayerId, Briefing],
     stage: StageSpec,
     stop_rng: random.Random,
@@ -111,7 +122,7 @@ async def _play_stage(
     max_rounds = stage.termination.max_rounds
     for round_number in range(1, max_rounds + 1):
         outcome = await _play_round(
-            config, players, state, inbox, briefings, stage, round_number
+            config, players, state, inbox, reports, briefings, stage, round_number
         )
         if outcome is not None:
             return outcome
@@ -126,6 +137,7 @@ async def _play_round(
     players: dict[PlayerId, Player],
     state: EpisodeState,
     inbox: dict[PlayerId, list[Move]],
+    reports: dict[PlayerId, list[Report]],
     briefings: dict[PlayerId, Briefing],
     stage: StageSpec,
     round_number: int,
@@ -144,18 +156,35 @@ async def _play_round(
         # before any move of the phase is in, so neither sees the other's.
         moves = await asyncio.gather(
             *(
-                _phase_move(config, players, state, inbox, briefings, phase, record, p)
+                _phase_move(
+                    config, players, state, inbox, reports, briefings, phase, record, p
+                )
                 for p in actors
             )
         )
-        for player, move in zip(actors, moves):
-            record.moves[player] = move
-            inbox[_opponent(player)].append(move)
-        for move in moves:
+        # The opponent and the rules see the executed move; the record keeps
+        # the chosen one too, for measures of intent.
+        executed = [
+            _executed(config, state, record, player, move)
+            for player, move in zip(actors, moves)
+        ]
+        for player, chosen, done in zip(actors, moves, executed):
+            record.moves[player] = chosen
+            if done != chosen:
+                record.executed[player] = done
+            inbox[_opponent(player)].append(done)
+        for move in executed:
             outcome = ENDING_RULES[game.game_id](move)
             if outcome is not None:
                 return outcome
-    return None
+    after_round = AFTER_ROUND.get(game.game_id)
+    if after_round is None:
+        return None
+    end = after_round(game, state, record)
+    record.reports = end.reports
+    for player, report in end.reports.items():
+        reports[player].append(report)
+    return end.outcome
 
 
 async def _phase_move(
@@ -163,6 +192,7 @@ async def _phase_move(
     players: dict[PlayerId, Player],
     state: EpisodeState,
     inbox: dict[PlayerId, list[Move]],
+    reports: dict[PlayerId, list[Report]],
     briefings: dict[PlayerId, Briefing],
     phase: PhaseSpec,
     record: RoundRecord,
@@ -184,13 +214,38 @@ async def _phase_move(
         briefing=briefings.pop(player, None),
         opponent_moves=inbox[player],
         contract=state.contract.model_copy() if state.contract else None,
+        reports=reports[player],
     )
     inbox[player] = []
+    reports[player] = []
     move = await _request_move(game, players[player], observation, context)
     if move is None:
         move = DEFAULT_MOVES[game.game_id](game, state, player, context)
         record.defaulted.add(player)
     return move
+
+
+def _executed(
+    config: EpisodeConfig,
+    state: EpisodeState,
+    record: RoundRecord,
+    player: PlayerId,
+    move: Move,
+) -> Move:
+    """The move as carried out: the chosen move, unless the noise treatment hits.
+
+    Each move draws from its own seeded stream, so the draws never depend on
+    the order of moves, and both episodes of a pair get the same accidents.
+    Default moves are the referee's, so noise never touches them.
+    """
+    noise = config.treatments.noise
+    misfire = NOISE.get(config.game.game_id)
+    if noise is None or misfire is None or player in record.defaulted:
+        return move
+    rng = random.Random(f"noise-{config.seed}-{record.stage}-{record.round}-{player}")
+    if rng.random() >= noise.rate:
+        return move
+    return misfire(config.game, state, player, move, rng)
 
 
 async def _request_move(
