@@ -352,7 +352,7 @@ flowchart TD
 3. **Declared type.** It only states fields in `context.declarable_fields`, which are the private ones.
 4. **Game rules.** `MOVE_CHECKS[game_id]` returns no problem. For contract dynamics, that's the transfer cap.
 
-Players can fail in two ways, and both go through the same retry path. Either the referee rejects the move, or the player raises `InvalidMove` itself, which is what `model_player` does when a tool call is missing or malformed.
+Players can fail in two ways, and both go through the same retry path. Either the referee rejects the move, or the player raises `InvalidMove` itself, which is what `model_player` does when a tool call is missing or malformed, or lacks a field the tool requires. After a default move, `model_player` tells the model, in the next round, that its last move was not accepted.
 
 Default moves per game:
 
@@ -484,9 +484,10 @@ sequenceDiagram
     MP->>PR: tool(context)
     MP->>M: generate(messages, tools=[submit_move, answer_probe])
     M-->>MP: assistant message with a submit_move tool call
+    MP->>MP: raise InvalidMove if a required field is missing
     MP->>PR: parse(me, arguments)
     PR-->>MP: Move, or raise InvalidMove
-    MP->>PR: after_move(ask, me, observation, context), if the presenter has it
+    MP->>PR: after_move(ask, me, observation, context), if the presenter has it; on a retry, the round's first observation
     PR->>M: ask(question) - on a COPY of messages + the move's tool results, nothing new shown
     M-->>PR: answer_probe(answer)
     PR-->>MP: ProbeResponses, added to probe_log

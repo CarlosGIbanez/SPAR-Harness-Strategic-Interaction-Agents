@@ -88,7 +88,8 @@ class Ask:
         The presenter's answer tool needs a choice field: ANSWER_WITH_CHOICE_TOOL.
         """
         number, picked = await _answer(self.model, self.messages, self.tools, question)
-        return (picked if picked in options else None), number
+        by_name = {option.lower(): option for option in options}
+        return by_name.get((picked or "").strip().lower()), number
 
     async def fresh(self, question: str) -> float | None:
         number, _ = await _answer(self.model, [], [self.answer_tool], question)
@@ -125,9 +126,13 @@ def model_player(
     pending_tool_calls: list[tuple[str, str]] = []  # (id, function) awaiting a result
     last_contract: ContractState | None = None  # only new contract news is shown
     tools: list[ToolInfo] = []  # fixed on the first call, then never changed
+    # A retry's observation is empty, so probes after the move use the round's.
+    round_observation: Observation | None = None
+    last_failed = False  # the last call raised, so a new round means a default move
 
     async def play(observation: Observation, context: PhaseContext) -> Move:
-        nonlocal last_contract
+        nonlocal last_contract, round_observation, last_failed
+        replaced = context.error is None and last_failed
         me = observation.recipient
         if not tools:
             tools.extend([presenter.tool(observation, context), presenter.answer_tool])
@@ -140,7 +145,9 @@ def model_player(
         for tool_call_id, function in pending_tool_calls:
             messages.append(
                 ChatMessageTool(
-                    content=_feedback(function, context.error),
+                    content=_feedback(
+                        function, context.error or (REPLACED if replaced else None)
+                    ),
                     tool_call_id=tool_call_id,
                     function=function,
                 )
@@ -151,20 +158,23 @@ def model_player(
                     content=f"{context.error} Call {SUBMIT_MOVE} exactly once."
                 )
             )
+        notice = f"{REPLACED}\n\n" if replaced and not pending_tool_calls else ""
         pending_tool_calls.clear()
         if context.error is None:
+            round_observation = observation
             if observation.contract == last_contract:
                 shown = observation.model_copy(update={"contract": None})
             else:
                 shown = observation
                 last_contract = observation.contract
             messages.append(
-                ChatMessageUser(content=presenter.render(me, shown, context))
+                ChatMessageUser(content=notice + presenter.render(me, shown, context))
             )
             ask = Ask(model, messages, tools, presenter.answer_tool)
             probes = await presenter.probes(ask, me, observation, context)
             probe_log.extend(_in_round(probes, context))
 
+        last_failed = True
         output = await model.generate(messages, tools=tools)
         messages.append(output.message)
         tool_calls = output.message.tool_calls or []
@@ -172,7 +182,13 @@ def model_player(
         moves = [call for call in tool_calls if call.function == SUBMIT_MOVE]
         if len(moves) != 1:  # stray answer_probe calls are ignored, not fatal
             raise InvalidMove(f"You must call {SUBMIT_MOVE} exactly once.")
-        move = presenter.parse(me, moves[0].arguments)
+        arguments = moves[0].arguments
+        missing = [
+            name for name in tools[0].parameters.required if arguments.get(name) is None
+        ]
+        if missing:
+            raise InvalidMove(f"{SUBMIT_MOVE} is missing {', '.join(missing)}.")
+        move = presenter.parse(me, arguments)
         if presenter.after_move is not None:
             # As if the move were accepted: its calls answered, nothing new shown.
             answered = [
@@ -184,11 +200,15 @@ def model_player(
                 for tool_call_id, function in pending_tool_calls
             ]
             after = Ask(model, [*messages, *answered], tools, presenter.answer_tool)
-            probes = await presenter.after_move(after, me, observation, context)
+            probes = await presenter.after_move(after, me, round_observation, context)
             probe_log.extend(_in_round(probes, context))
+        last_failed = False
         return move
 
     return play
+
+
+REPLACED = "Your last move was not accepted, so the referee made the default move."
 
 
 def _feedback(function: str, error: str | None) -> str:
@@ -227,12 +247,18 @@ async def _answer(
         content=f"{question} Answer by calling the {ANSWER_PROBE} tool."
     )
     output = await model.generate([*messages, prompt], tools=tools)
-    for call in output.message.tool_calls or []:
-        value = call.arguments.get("answer")
-        if call.function == ANSWER_PROBE and isinstance(value, int | float):
-            choice = call.arguments.get("choice")
+    calls = [
+        call
+        for call in output.message.tool_calls or []
+        if call.function == ANSWER_PROBE
+    ]
+    for call in calls:
+        value, choice = call.arguments.get("answer"), call.arguments.get("choice")
+        if isinstance(value, int | float):
             return float(value), choice if isinstance(choice, str) else None
-    return None, None
+    # no usable number, but a choice still counts
+    choices = [call.arguments.get("choice") for call in calls]
+    return None, next((choice for choice in choices if isinstance(choice, str)), None)
 
 
 def label(field: str) -> str:
