@@ -48,6 +48,7 @@ flowchart TB
 | `priors.py` | Seeded type drawing | `draw_types` |
 | `referee.py` | The general stage engine | `run_episode`, `Player`, `InvalidMove`, the plugin dicts |
 | `bots.py` | Scripted players for both games | `equilibrium_bot`, `random_bot`, `rational_contract_bot`, `scripted_contract_bot` |
+| `nuclear_bots.py` | The F2 bots for the nuclear crisis, and the level and mid-crisis starts of their games | `nuclear_bot`, `bot_plan`, `level_start`, `mid_crisis_start` |
 | `model_player.py` | Game-agnostic adapter from an Inspect `Model` to a `Player`: conversation, the fixed tools list, retries, side-call probes | `model_player`, `Presenter`, `ProbeResponse`, `Ask`, `ask_probe`, `ANSWER_PROBE_TOOL`, `ANSWER_WITH_CHOICE_TOOL` |
 | `nuclear_crisis.py` | Nuclear crisis: Payne's ladder, pure rules plus the game's plugins | `LADDER`, `is_nuclear_use`, `effective_value`, `territory_worth`, `share_payoff`, `draw_world`, `nuclear_crisis_game`, `ALLOWED_ACTIONS`, `briefing`, `ending_after_move`, `default_move`, `move_problem`, `before_stage`, `after_round`, `misfire`, `episode_payoffs` |
 | `crisis_presenter.py`, `contract_presenter.py`, `nuclear_presenter.py` | How each game is shown to a model | `CRISIS_PRESENTER`, `CONTRACT_PRESENTER`, `NUCLEAR_PRESENTER` |
@@ -458,6 +459,7 @@ Each bot is a **closure**: a factory function returns an `async play(observation
 | `equilibrium_bot()` | crisis | its `Briefing` | Proposer: `_risk_return_share` against the opponent grid, breaking ties toward the most generous. Responder: accepts at or above `expected_reservation_value`, otherwise fights. Truthful declared types |
 | `rational_contract_bot()` | contract | its `ContractBriefing` | Proposer: walks away if `deal_exists` is false; otherwise `_best_credible_contract`, which scans 101 credible transfers and picks the $(q^*(t), t)$ that maximizes the smaller side's value. Responder: accepts iff `contract_value` > 0, assuming the bearer honors iff $\tau \le 0$; otherwise walks away. Bearer: honors iff $\tau \le 0$. Sends empty messages |
 | `scripted_contract_bot(decision, appeal)` | contract | none | Proposes $(\tfrac12, 0)$, accepts anything, sends `appeal` as the other player, and always makes `decision` as bearer. The task exposes it as `always_honor` and `always_renege` |
+| `nuclear_bot(kind, seed, start)` | nuclear | its current rung | The F2 bots: `calm` holds Initial Diplomatic Pressure; `strike`, `jump`, `rollback` and `explanation` start from the seed's rung and climb one to three rungs in rounds 5, 10 and 15, announced (strike) or not (the others). `jump` stays up, `rollback` and `explanation` return the next round. `start` picks up a mid-crisis start |
 
 ### 6.2 The model player (`model_player.py`) and presenters
 
