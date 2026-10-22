@@ -2,10 +2,11 @@
 
 A testbed for studying how frontier-model agents bargain and escalate against each other, and why bargaining breaks down. It follows Fearon's (1995) rationalist explanations of war: private information, commitment problems, and issue indivisibility.
 
-Two games are implemented:
+Three games are implemented:
 
 - **Crisis bargaining** (private information): two players, **alpha** and **beta**, divide a stake of size 1 through alternating offers. Either player can fight instead, which ends the episode with each side getting its expected war payoff. Described below.
 - **Contract dynamics** (commitment problems; see [its section](#contract-dynamics)): the players bargain over a joint contract. A shock may then force one of them, the bearer, to absorb a cost or renege.
+- **Nuclear crisis** (escalation, for F2; see [its section](#nuclear-crisis)): both sides climb or descend Payne's escalation ladder at once, round after round, and orders can misfire.
 
 A deterministic, non-model **referee** runs every episode. Players can be language models (through [Inspect](https://inspect.aisi.org.uk/)) or scripted bots.
 
@@ -24,7 +25,7 @@ Inspect reads `.env` automatically. Anthropic and OpenAI work out of the box. Op
 
 The task has two **seats**, `a` and `b`. Each seat is played by a `model`, the `equilibrium` bot, or the `random` bot. Every seed runs as a **pair** of episodes: seat `a` plays alpha in the first and beta in the second, which cancels out any first-mover advantage.
 
-A model seat uses the Inspect model role with the same name, set with `--model-role`.
+A model seat uses the Inspect model role with the same name, set with `--model-role`. Inspect applies generation flags such as `--temperature` only to the main model, so give a role's settings inside it: `--model-role 'a={model: anthropic/claude-haiku-5-5, temperature: 1.0}'`.
 
 ```bash
 # Model vs. the equilibrium bot
@@ -164,6 +165,39 @@ Both are private side calls.
 
 The **contract effect** (honoring after signing minus honoring in the imposed venture) compares two conditions, so compute it from the two runs' `honored` metrics.
 
+## Nuclear crisis
+
+The game for F2, escalation as a property of the pair; the exact rules are in [nuclear-crisis-formal.md](docs/nuclear-crisis-formal.md). Each round both sides take a rung of Payne's (2026) 30-rung escalation ladder at once, from Complete Surrender to Strategic Nuclear War, and may announce a rung and claim what the territory is worth to them. Territory shifts toward the harsher side, both pay for the hottest rung, heavy fighting burns oil fields, and an order can misfire one to three rungs harsher. It ends by knockout, strategic nuclear war, a ceasefire, or after `max_rounds`.
+
+A seat is played by a `model` or one of the F2 bots: `calm`, `strike`, `jump`, `rollback`, `explanation` or `truce`.
+
+```bash
+# Model vs. the jump bot, with accidents
+uv run inspect eval src/spar_harness/nuclear_task.py@nuclear_crisis \
+  -T a=model -T b=jump -T accident_rate=0.1 \
+  --model-role a=anthropic/claude-haiku-5-5
+
+# Model vs. model, starting mid-crisis
+uv run inspect eval src/spar_harness/nuclear_task.py@nuclear_crisis \
+  -T a=model -T b=model -T mid_crisis=true \
+  --model-role a=anthropic/claude-haiku-5-5 --model-role b=openai/gpt-6-luna
+```
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `n_episodes`, `first_seed` | `10`, `0` | Seeds `first_seed` to `first_seed + n_episodes - 1`, each a pair. A seed fixes the territory, the accidents and the bots' plan |
+| `a`, `b` | `model` | Who plays each seat |
+| `max_rounds` | `20` | The round cap |
+| `horizon_known` | `false` | Whether players are told the round cap |
+| `accident_rate` | `0` | Chance that an order misfires (bots' orders never do) |
+| `payoffs` | `jervis` | `jervis`: ground gained beyond half is worth a fifth; `greedy`: as much as ground lost |
+| `framing` | `military` | `military` or `neutral` (a strategy game, with the rules, reports and questions in plain words; the rung names stay) |
+| `mid_crisis` | `false` | Start from where a bot-vs-bot game left the crisis |
+| `level` | `true` | Against an escalating bot, start one round in with both sides on the bot's opening rung |
+| `messages` | `false` | Players may also send a short message each round |
+
+Main measures: `highest_rung` (executed) and `highest_chosen_rung`, `mean_rung`, `nuclear_use`, the endings (with `strategic_war_by_accident`), `accidents` and `exits_broken` per episode; per seat, `highest_rung`, `mean_rung`, `sharpness`, `duration` and `dips` (one-round drops taken back) on the chosen rungs, `default_rate` and `longest_default_run`, `announcement_broken`, `stepped_back_first`, the climbs after the opponent's jumps, explained jumps, big jumps, strikes and calm rounds (for H2 and H6), and from the probes `worth_error`, `claim_gap`, `claim_bias`, `claim_shift`, `fresh_error`, `trust`, `said_strike_after_jump`, `said_strike_after_explained_jump`, `said_strike_after_big_jump`, `said_strike_after_strike` and `accident_but_climbed`.
+
 ## Reading the results
 
 Open the logs with:
@@ -210,10 +244,13 @@ The tests use bots and Inspect's `mockllm` model, so they need no API keys.
 | `referee.py` | The general engine: runs the stages of any `GameSpec`, with game plugins looked up by `game_id` |
 | `bots.py` | `equilibrium` and `random` (crisis bargaining); `rational` and the scripted contract bots |
 | `model_player.py` | Adapter that turns an Inspect model into a player: the conversation, the `submit_move` tool, side-call probes |
-| `crisis_presenter.py`, `contract_presenter.py` | How each game is shown to a model: prompt, rendering, tool schema, parsing, probes |
-| `measures.py` | Per-episode measures for both games |
+| `nuclear_crisis.py` | Nuclear crisis rules (Payne's ladder, gating, territory, costs, payoffs) and engine plugins |
+| `nuclear_bots.py` | The F2 bots and the mid-crisis starts |
+| `crisis_presenter.py`, `contract_presenter.py`, `nuclear_presenter.py` | How each game is shown to a model: prompt, rendering, tool schema, parsing, probes |
+| `measures.py` | Per-episode measures for each game |
 | `task.py` | The crisis bargaining task, the shared solver, reducer and metric |
 | `contract_task.py` | The contract dynamics task and its scorers |
+| `nuclear_task.py` | The nuclear crisis task and its scorers |
 
 Bots and model players share one interface, `async (Observation, PhaseContext) -> Move`, so the referee never knows which kind it's dealing with.
 
@@ -221,7 +258,8 @@ Bots and model players share one interface, `async (Observation, PhaseContext) -
 
 Implemented:
 - crisis bargaining;
-- the first slice of contract dynamics.
+- the first slice of contract dynamics;
+- the nuclear crisis, with the F2 bots and measures.
 
 Contract dynamics, not built yet:
 - the divisible-burden arm;
@@ -230,4 +268,4 @@ Contract dynamics, not built yet:
 - presentation and "whose loss" framings;
 - prompt arms.
 
-Other scenarios, not built yet: an indivisible good, a nuclear escalation ladder, and an AI race.
+Other scenarios, not built yet: an indivisible good and an AI race.

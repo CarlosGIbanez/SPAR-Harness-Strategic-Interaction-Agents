@@ -52,9 +52,10 @@ flowchart TB
 | `model_player.py` | Game-agnostic adapter from an Inspect `Model` to a `Player`: conversation, the fixed tools list, retries, side-call probes | `model_player`, `Presenter`, `ProbeResponse`, `Ask`, `ask_probe`, `ANSWER_PROBE_TOOL`, `ANSWER_WITH_CHOICE_TOOL` |
 | `nuclear_crisis.py` | Nuclear crisis: Payne's ladder, pure rules plus the game's plugins | `LADDER`, `is_nuclear_use`, `effective_value`, `territory_worth`, `share_payoff`, `draw_world`, `nuclear_crisis_game`, `ALLOWED_ACTIONS`, `briefing`, `ending_after_move`, `default_move`, `move_problem`, `before_stage`, `after_round`, `misfire`, `episode_payoffs` |
 | `crisis_presenter.py`, `contract_presenter.py`, `nuclear_presenter.py` | How each game is shown to a model | `CRISIS_PRESENTER`, `CONTRACT_PRESENTER`, `NUCLEAR_PRESENTER` |
-| `measures.py` | Per-episode measures for both games, computed from an `EpisodeState` | `outcome_measures`, `player_measures`, `contract_outcome_measures`, `contract_player_measures` |
+| `measures.py` | Per-episode measures for each game, computed from an `EpisodeState` | `outcome_measures`, `player_measures`, `contract_outcome_measures`, `contract_player_measures`, `nuclear_outcome_measures`, `nuclear_player_measures`, `opponent_move_kind`, `climb` |
 | `task.py` | The crisis bargaining task and its scorers, plus the shared solver, reducer and metric | `crisis_bargaining`, `referee`, `mean_of_defined`, `mean_of_defined_reducer`, `Controller`, `PRESENTERS` |
 | `contract_task.py` | The contract dynamics task and its scorers | `contract_dynamics`, `contract_outcome_scorer`, `contract_seat_scorer` |
+| `nuclear_task.py` | The nuclear crisis task and its scorers | `nuclear_crisis`, `nuclear_outcome_scorer`, `nuclear_seat_scorer` |
 | `__init__.py` | The `main()` stub left over from project scaffolding (unused) | |
 
 ### Import graph
@@ -533,12 +534,12 @@ flowchart LR
     red --> met["mean_of_defined metric<br/>(skips None, nan if never defined)"]
 ```
 
-| | Crisis bargaining | Contract dynamics |
+| | Crisis bargaining | Contract dynamics | Nuclear crisis |
 |---|---|---|
-| Task | `crisis_bargaining` in `task.py` | `contract_dynamics` in `contract_task.py` |
-| Controllers | `model`, `equilibrium`, `random` | `model`, `rational`, `always_honor`, `always_renege` |
-| Outcome scorer | `outcome_scorer` from `outcome_measures` | `contract_outcome_scorer` from `contract_outcome_measures` |
-| Seat scorer | `seat_scorer`: `player_measures` plus comprehension | `contract_seat_scorer`: `contract_player_measures`, plus comprehension, belief and belief error from the probes |
+| Task | `crisis_bargaining` in `task.py` | `contract_dynamics` in `contract_task.py` | `nuclear_crisis` in `nuclear_task.py` |
+| Controllers | `model`, `equilibrium`, `random` | `model`, `rational`, `always_honor`, `always_renege` | `model`, `calm`, `strike`, `jump`, `rollback`, `explanation` |
+| Outcome scorer | `outcome_scorer` from `outcome_measures` | `contract_outcome_scorer` from `contract_outcome_measures` | `nuclear_outcome_scorer` from `nuclear_outcome_measures` |
+| Seat scorer | `seat_scorer`: `player_measures` plus comprehension | `contract_seat_scorer`: `contract_player_measures`, plus comprehension, belief and belief error from the probes | `nuclear_seat_scorer`: `nuclear_player_measures`, plus worth, claim and strike-or-accident measures from the probes |
 
 ### 7.2 Seats vs. positions
 

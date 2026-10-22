@@ -32,6 +32,7 @@ from spar_harness.crisis_bargaining import crisis_bargaining_game
 from spar_harness.crisis_presenter import CRISIS_PRESENTER
 from spar_harness.measures import outcome_measures, player_measures
 from spar_harness.model_player import ProbeResponse, model_player
+from spar_harness.nuclear_bots import nuclear_bot
 from spar_harness.nuclear_presenter import NUCLEAR_PRESENTER
 from spar_harness.referee import Player, run_episode
 from spar_harness.schema import (
@@ -56,7 +57,15 @@ Controller = Literal[
     "rational",
     "always_honor",
     "always_renege",
+    # nuclear crisis bots
+    "calm",
+    "strike",
+    "jump",
+    "rollback",
+    "explanation",
+    "truce",
 ]
+NUCLEAR_BOTS = ("calm", "strike", "jump", "rollback", "explanation", "truce")
 Seat = Literal["a", "b"]
 
 COMPREHENSION_TOLERANCE = 0.01
@@ -190,6 +199,10 @@ def _player(
         return random_bot(seed=2 * config.seed + (0 if position == "alpha" else 1))
     if controller == "rational":
         return rational_contract_bot()
+    if controller in NUCLEAR_BOTS:
+        start = config.game.nuclear.start
+        last = start.history[-1][position] if start and start.history else None
+        return nuclear_bot(controller, seed=config.seed, start=last)
     decision = "honor" if controller == "always_honor" else "renege"
     return scripted_contract_bot(decision, appeal)
 
