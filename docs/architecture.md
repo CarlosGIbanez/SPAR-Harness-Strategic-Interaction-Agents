@@ -1,6 +1,6 @@
 # Architecture
 
-How the code in `src/spar_harness/` is organized: its modules, types and functions, and how they connect. For the games themselves, see [crisis-bargaining-formal.md](crisis-bargaining-formal.md) and [contract-dynamics-formal.md](contract-dynamics-formal.md).
+How the code in `src/spar_harness/` is organized: its modules, types and functions, and how they connect. For the games themselves, see [crisis-bargaining-formal.md](crisis-bargaining-formal.md), [contract-dynamics-formal.md](contract-dynamics-formal.md) and [nuclear-crisis-formal.md](nuclear-crisis-formal.md).
 
 ## 1. The big picture
 
@@ -49,7 +49,8 @@ flowchart TB
 | `referee.py` | The general stage engine | `run_episode`, `Player`, `InvalidMove`, the plugin dicts |
 | `bots.py` | Scripted players for both games | `equilibrium_bot`, `random_bot`, `rational_contract_bot`, `scripted_contract_bot` |
 | `model_player.py` | Game-agnostic adapter from an Inspect `Model` to a `Player`: conversation, the fixed tools list, retries, side-call probes | `model_player`, `Presenter`, `ProbeResponse`, `Ask`, `ask_probe`, `ANSWER_PROBE_TOOL`, `ANSWER_WITH_CHOICE_TOOL` |
-| `crisis_presenter.py`, `contract_presenter.py` | How each game is shown to a model | `CRISIS_PRESENTER`, `CONTRACT_PRESENTER` |
+| `nuclear_crisis.py` | Nuclear crisis: Payne's ladder, pure rules plus the game's plugins | `LADDER`, `is_nuclear_use`, `effective_value`, `territory_worth`, `share_payoff`, `draw_world`, `nuclear_crisis_game`, `ALLOWED_ACTIONS`, `briefing`, `ending_after_move`, `default_move`, `move_problem`, `before_stage`, `after_round`, `misfire`, `episode_payoffs` |
+| `crisis_presenter.py`, `contract_presenter.py`, `nuclear_presenter.py` | How each game is shown to a model | `CRISIS_PRESENTER`, `CONTRACT_PRESENTER`, `NUCLEAR_PRESENTER` |
 | `measures.py` | Per-episode measures for both games, computed from an `EpisodeState` | `outcome_measures`, `player_measures`, `contract_outcome_measures`, `contract_player_measures` |
 | `task.py` | The crisis bargaining task and its scorers, plus the shared solver, reducer and metric | `crisis_bargaining`, `referee`, `mean_of_defined`, `mean_of_defined_reducer`, `Controller`, `PRESENTERS` |
 | `contract_task.py` | The contract dynamics task and its scorers | `contract_dynamics`, `contract_outcome_scorer`, `contract_seat_scorer` |
@@ -162,7 +163,7 @@ classDiagram
 
 `HorizonTreatment(known)`, `PrivateInfoTreatment(private_fields)`, `NoiseTreatment(rate)` and `UniformPrior(low, high)` are left out of the diagram; their fields are given in the parentheses.
 
-The two games, expressed as stages:
+The games, expressed as stages:
 
 | Game | Stages (phases per round) | Ran out of rounds |
 |---|---|---|
@@ -171,8 +172,9 @@ The two games, expressed as stages:
 | | `persuasion`: other `message`, bearer `message`, for $K$ rounds ($K$ may be 0) | `next_stage` |
 | | `decision`: bearer `decision`, 1 round | never: honor and renege both end the game |
 | Imposed venture | `persuasion`, `decision`; there is no `bargaining` stage | |
+| Nuclear crisis | `crisis`: both `rung`, up to `max_rounds` (20); the round-end rule ends it by knockout, strategic war or ceasefire | `horizon` |
 
-**Toggle convention:** a treatment that is `None` is **off**. A parameter object turns it on. `horizon` is the exception: it is always present, because the horizon is always either known or unknown. Contract treatments are numbers in `ContractParams` (for example, "no transfers" is `transfer_cap = 0`), not `Treatments` fields.
+**Toggle convention:** a treatment that is `None` is **off**. A parameter object turns it on. `horizon` is the exception: it is always present, because the horizon is always either known or unknown. Contract treatments are numbers in `ContractParams` (for example, "no transfers" is `transfer_cap = 0`), not `Treatments` fields, and so are the nuclear crisis's payoffs and framing in `NuclearParams`.
 
 ### 3.2 Runtime: what happens during an episode
 
@@ -255,7 +257,7 @@ The following mental models are worth keeping in mind:
 - **A message phase has no actions.** In a phase with `action_kind="message"`, `allowed_actions` is empty, `Move.action` must be `None`, and `Move.message` is the move itself.
 - **`ContractState` is public.** It holds the signed terms and, after nature's draw, the shock and the bearer. It's attached to every observation, but it never contains the bearer's decision. That decision is a move the other player is never shown.
 - **`PrivateType` vs. `PartialType`.** A `PrivateType` is a complete, true type. A `PartialType` is the same shape with holes (`None` means unknown or not stated). It's used for the opponent's public fields in a `Briefing` and for a `declared_type` claim. Contract dynamics has no types: `priors` is `None` and `types` is empty.
-- **`Action` is a discriminated union** on `kind`. Pydantic chooses `Offer` (`"offer"`), `ContractOffer` (`"propose"`) or `Choice` (every other kind) from it.
+- **`Action` is a discriminated union** on `kind`. Pydantic chooses `Offer` (`"offer"`), `ContractOffer` (`"propose"`), `Rung` (`"rung"`) or `Choice` (every other kind) from it.
 - **Stored values are always from alpha's side.** A split is alpha's share, and a contract's $q$ is the probability that alpha bears the cost. Only the presenters convert these to "your share" and "probability you bear".
 - **Chosen vs. executed.** With the noise treatment on, a game's `NOISE` rule may change a move as it's carried out. `RoundRecord.moves` keeps the chosen move and `RoundRecord.executed` the changed one. The opponent, the ending rule and the end-of-round rule see the executed move; measures of intent keep using the chosen one. A move that noise leaves unchanged is not an accident, and default moves are never touched.
 - **Reports are private.** A game with an end-of-round rule (`AFTER_ROUND`) tells each player what happened from its own side. A report reaches only its player, with that player's next observation, and stays in `RoundRecord.reports`. It's a flat dict: the game defines the keys and its presenter renders them.
@@ -264,13 +266,14 @@ The following mental models are worth keeping in mind:
 **Type aliases:**
 - `PlayerId`: `alpha` / `beta`.
 - `Role`: `proposer` / `responder` / `bearer` / `other` / `both`.
-- `ActionKind`: `offer` / `response` / `message` / `decision`.
+- `ActionKind`: `offer` / `response` / `message` / `decision` / `rung`.
 - `TypeField`: `capability` / `cost_of_conflict`.
-- `TalkField`: `message` / `declared_action` / `declared_type`.
+- `TalkField`: `message` / `declared_action` / `declared_type` / `declared_value`.
 - `Report`: a flat dict of strings, numbers and booleans, with keys the game defines.
 - `Ending`, for crisis bargaining: `agreement`, `fight`, `random_stop`.
 - `Ending`, for contract dynamics: `walked_away`, `no_shock`, `honored`, `reneged`.
-- `Ending`, for both: `horizon`.
+- `Ending`, for the nuclear crisis: `knockout`, `strategic_war`, `ceasefire`.
+- `Ending`, for all: `horizon`.
 
 ## 4. The referee (`referee.py`)
 
@@ -362,18 +365,18 @@ Default moves per game:
 
 ### 4.5 Plugin dicts and other constants
 
-| Name | Maps `game_id` to | Crisis bargaining | Contract dynamics |
-|---|---|---|---|
-| `ALLOWED_ACTIONS` | `ActionKind -> set of kinds` | offer: `{offer, fight}`; response: `{accept, reject, fight}` | offer: `{propose, walk_away}`; response: `{accept, reject, walk_away}`; message: `{}`; decision: `{honor, renege}` |
-| `BRIEFINGS` | `(config, state, player) -> briefing` | `briefing` | `briefing` |
-| `ENDING_RULES` | `(Move) -> Ending \| "next_stage" \| None` | accept means agreement, fight means fight | accept means `next_stage`; `walk_away`, `honor` and `renege` end the episode |
-| `PAYOFF_MODELS` | `(GameSpec, EpisodeState) -> payoffs` | `episode_payoffs` | `episode_payoffs` |
-| `DEFAULT_MOVES` | `(GameSpec, EpisodeState, PlayerId, PhaseContext) -> Move` | `default_move` | `default_move` |
-| `BEFORE_STAGE` (optional) | `(GameSpec, EpisodeState, StageSpec, Random) -> Ending \| None` | (absent) | `before_stage`: before `persuasion`, records the contract and draws shock and bearer |
-| `MOVE_CHECKS` (optional) | `(GameSpec, Move) -> problem \| None` | (absent) | `move_problem`: the transfer cap |
-| `ACTOR_RULES` (optional) | `(Role, EpisodeState) -> PlayerId` | (absent) | `actor_for`: bearer and other |
-| `AFTER_ROUND` (optional) | `(GameSpec, EpisodeState, RoundRecord) -> RoundEnd` | (absent) | (absent) |
-| `NOISE` (optional) | `(GameSpec, EpisodeState, PlayerId, Move, Random) -> Move`, the move as carried out when the noise treatment hits | (absent) | (absent) |
+| Name | Maps `game_id` to | Crisis bargaining | Contract dynamics | Nuclear crisis |
+|---|---|---|---|---|
+| `ALLOWED_ACTIONS` | `ActionKind -> set of kinds` | offer: `{offer, fight}`; response: `{accept, reject, fight}` | offer: `{propose, walk_away}`; response: `{accept, reject, walk_away}`; message: `{}`; decision: `{honor, renege}` | rung: `{rung}` |
+| `BRIEFINGS` | `(config, state, player) -> briefing` | `briefing` | `briefing` | `briefing`: the player's own worth |
+| `ENDING_RULES` | `(Move) -> Ending \| "next_stage" \| None` | accept means agreement, fight means fight | accept means `next_stage`; `walk_away`, `honor` and `renege` end the episode | none: the state ends it, in `after_round` |
+| `PAYOFF_MODELS` | `(GameSpec, EpisodeState) -> payoffs` | `episode_payoffs` | `episode_payoffs` | `episode_payoffs` |
+| `DEFAULT_MOVES` | `(GameSpec, EpisodeState, PlayerId, PhaseContext) -> Move` | `default_move` | `default_move` | `default_move`: hold the last rung |
+| `BEFORE_STAGE` (optional) | `(GameSpec, EpisodeState, StageSpec, Random) -> Ending \| None` | (absent) | `before_stage`: before `persuasion`, records the contract and draws shock and bearer | `before_stage`: sets up the territory, or a mid-crisis start |
+| `MOVE_CHECKS` (optional) | `(GameSpec, Move) -> problem \| None` | (absent) | `move_problem`: the transfer cap | `move_problem`: announcements are rungs |
+| `ACTOR_RULES` (optional) | `(Role, EpisodeState) -> PlayerId` | (absent) | `actor_for`: bearer and other | (absent) |
+| `AFTER_ROUND` (optional) | `(GameSpec, EpisodeState, RoundRecord) -> RoundEnd` | (absent) | (absent) | `after_round`: territory, costs, burning oil, reports, endings |
+| `NOISE` (optional) | `(GameSpec, EpisodeState, PlayerId, Move, Random) -> Move`, the move as carried out when the noise treatment hits | (absent) | (absent) | `misfire`: one to three rungs harsher |
 
 The optional dicts are read with `.get`, so a game without nature or extra roles simply has no entry. Other constants: `MAX_RETRIES = 2` and `TALK_FIELDS`.
 
@@ -492,15 +495,15 @@ sequenceDiagram
 
 A `Presenter` is a frozen dataclass of five plain values, plus two optional ones:
 
-| Field | Crisis bargaining | Contract dynamics |
-|---|---|---|
-| `system_prompt` | Rules of alternating offers and fighting | Rules of the two stages; says the interaction is one-shot and anonymous |
-| `render` | Types, priors, status quo, horizon; the opponent's offers as "offer you X of the stake" | Explicit payoff table, benefits, $p$, transfer regime, an enforcement statement ("a promise, not a lock" when $F = 0$); proposals as "you bear with probability X"; contract news; the current task |
-| `tool` | One schema for the whole episode: every action (`accept`, `fight`, `offer`, `reject`), `own_share`, plus the talk and `declared_*` fields the treatments open | One schema for the whole episode: every action, `probability_you_bear`, `transfer`, `message` (always, for persuasion), plus `promise` when open. `action` is optional because message phases have none |
-| `parse` | `own_share` to alpha's `split` | `probability_you_bear` to `alpha_bears_prob`; `promise` to `declared_action` |
-| `probes(ask, me, observation, context)` | Comprehension (own expected fight payoff), once after the briefing, with its ground truth | Belief ($\pi$) before each response to an offer; comprehension (own payoff from reneging) before the decision. The ground truth is computed later, in the scorer |
-| `after_move` (optional, default none) | (none) | (none) |
-| `answer_tool` (default `ANSWER_PROBE_TOOL`) | the default | the default |
+| Field | Crisis bargaining | Contract dynamics | Nuclear crisis |
+|---|---|---|---|
+| `system_prompt` | Rules of alternating offers and fighting | Rules of the two stages; says the interaction is one-shot and anonymous | Short and framing-free; the rules come with the briefing |
+| `render` | Types, priors, status quo, horizon; the opponent's offers as "offer you X of the stake" | Explicit payoff table, benefits, $p$, transfer regime, an enforcement statement ("a promise, not a lock" when $F = 0$); proposals as "you bear with probability X"; contract news; the current task | Military or neutral opening and rules, the ladder by name and description, and the player's worth; then each round from its own side, its own accident included, in the framing's words |
+| `tool` | One schema for the whole episode: every action (`accept`, `fight`, `offer`, `reject`), `own_share`, plus the talk and `declared_*` fields the treatments open | One schema for the whole episode: every action, `probability_you_bear`, `transfer`, `message` (always, for persuasion), plus `promise` when open. `action` is optional because message phases have none | The option taken, plus `announced`, `claimed_worth` and `message` when open |
+| `parse` | `own_share` to alpha's `split` | `probability_you_bear` to `alpha_bears_prob`; `promise` to `declared_action` | option names to `Rung`s; `claimed_worth` to `declared_value` |
+| `probes(ask, me, observation, context)` | Comprehension (own expected fight payoff), once after the briefing, with its ground truth | Belief ($\pi$) before each response to an offer; comprehension (own payoff from reneging) before the decision. The ground truth is computed later, in the scorer | The territory's worth and trust in the opponent (0-100) before every move; after an opponent's climb, strike or accident with a confidence |
+| `after_move` (optional, default none) | (none) | (none) | On rounds 1, 4, 7, ...: the worth right after the claim, and the same sum asked fresh |
+| `answer_tool` (default `ANSWER_PROBE_TOOL`) | the default | the default | `ANSWER_WITH_CHOICE_TOOL` |
 
 **Three ways to ask.** The `ask` a probe receives is callable: `await ask(question)` asks on a copy of the conversation and returns a number. `ask.choice(question, options)` also returns the option the model picked; it needs `ANSWER_WITH_CHOICE_TOOL` as the presenter's answer tool. `ask.fresh(question)` asks in a new conversation, with no role and no game history and only the answer tool. Probes in `after_move` ask on a copy where the move's tool calls are already answered, as if the move were accepted, before the player is shown anything new. The model player stamps every answer with the round of its move.
 
@@ -599,6 +602,8 @@ The probe-based measures are computed in the task modules:
 Each game has six agreed seams. Only the last touches Inspect, and it uses the `mockllm` model, so the suite never calls a real API.
 
 Engine features that no real game uses yet, such as simultaneous moves, end-of-round reports and execution noise, are tested in `test_engine.py` with a toy game that is registered in the plugin dicts only for those tests.
+
+The nuclear crisis is tested in `test_nuclear_crisis.py`: its rules, episodes played through the referee, and its presenter with a mock model.
 
 | Seam | Crisis bargaining | Contract dynamics | Checks |
 |---|---|---|---|

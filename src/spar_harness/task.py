@@ -32,6 +32,7 @@ from spar_harness.crisis_bargaining import crisis_bargaining_game
 from spar_harness.crisis_presenter import CRISIS_PRESENTER
 from spar_harness.measures import outcome_measures, player_measures
 from spar_harness.model_player import ProbeResponse, model_player
+from spar_harness.nuclear_presenter import NUCLEAR_PRESENTER
 from spar_harness.referee import Player, run_episode
 from spar_harness.schema import (
     EpisodeConfig,
@@ -168,6 +169,7 @@ def referee() -> Solver:
 PRESENTERS = {
     "crisis_bargaining": CRISIS_PRESENTER,
     "contract_dynamics": CONTRACT_PRESENTER,
+    "nuclear_crisis": NUCLEAR_PRESENTER,
 }
 
 

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 PlayerId = Literal["alpha", "beta"]
 TypeField = Literal["capability", "cost_of_conflict"]
-TalkField = Literal["message", "declared_action", "declared_type"]
+TalkField = Literal["message", "declared_action", "declared_type", "declared_value"]
 Ending = Literal[
     # crisis bargaining
     "agreement",
@@ -17,6 +17,10 @@ Ending = Literal[
     "no_shock",
     "honored",
     "reneged",
+    # nuclear crisis
+    "knockout",
+    "strategic_war",
+    "ceasefire",
     # both: the round cap was reached without agreement
     "horizon",
 ]
@@ -58,6 +62,41 @@ class ContractParams(BaseModel):
     imposed_venture: bool = False  # control arm: no signing, the shock is certain
 
 
+class NuclearWorld(BaseModel):
+    """What the disputed territory holds. Each side values it differently."""
+
+    oil_fields: int  # heavy fighting burns them
+    towns: dict[PlayerId, int]  # towns of each side's own nationality
+    pass_value: dict[PlayerId, float]  # what the mountain pass is worth to each side
+    oil_value: float = 7.0  # per oil field, to either side
+    town_value: float = 5.0  # per town of one's own nationality
+
+
+class NuclearStart(BaseModel):
+    """Where a game that begins mid-crisis starts: the state and the rounds so far."""
+
+    alpha_share: float = Field(ge=0.0, le=1.0)
+    oil_fields: int
+    costs: dict[PlayerId, float]
+    nuclear_used: bool  # whether someone already crossed the tactical threshold
+    history: list[dict[PlayerId, int]]  # the rungs each side took, round by round
+
+
+class NuclearParams(BaseModel):
+    """The fixed numbers of a nuclear crisis game."""
+
+    world: NuclearWorld
+    payoffs: Literal["jervis", "greedy"] = "jervis"
+    framing: Literal["military", "neutral"] = "military"
+    shift_per_value: float = 0.001  # territory share per point of rung-value gap
+    shift_cap: float = 0.15  # the most territory share either side gains in a round
+    cost_per_value: float = 0.025  # what each side pays per point of the hottest rung
+    opponent_value_range: tuple[float, float] = (30.0, 100.0)  # told to the players
+    start: NuclearStart | None = None  # None: the crisis starts at the start line
+    explains_jumps: set[PlayerId] = set()  # say "it was an accident" after a jump
+    scripted: set[PlayerId] = set()  # played by a script: its orders never misfire
+
+
 class Offer(BaseModel):
     kind: Literal["offer"] = "offer"
     split: float = Field(ge=0.0, le=1.0)  # alpha's share of the stake
@@ -73,7 +112,12 @@ class Choice(BaseModel):
     kind: Literal["accept", "reject", "fight", "walk_away", "honor", "renege"]
 
 
-Action = Annotated[Offer | ContractOffer | Choice, Field(discriminator="kind")]
+class Rung(BaseModel):
+    kind: Literal["rung"] = "rung"
+    rung: int = Field(ge=1, le=30)  # 1 is complete surrender, 30 strategic nuclear war
+
+
+Action = Annotated[Offer | ContractOffer | Choice | Rung, Field(discriminator="kind")]
 
 
 class Move(BaseModel):
@@ -83,11 +127,12 @@ class Move(BaseModel):
     declared_type: PartialType | None = (
         None  # claim about the player's own private fields
     )
+    declared_value: float | None = None  # claim about what the stake is worth to it
 
 
-GameId = Literal["crisis_bargaining", "contract_dynamics"]
+GameId = Literal["crisis_bargaining", "contract_dynamics", "nuclear_crisis"]
 Role = Literal["proposer", "responder", "bearer", "other", "both"]
-ActionKind = Literal["offer", "response", "message", "decision"]
+ActionKind = Literal["offer", "response", "message", "decision", "rung"]
 
 
 class PhaseSpec(BaseModel):
@@ -114,6 +159,7 @@ class GameSpec(BaseModel):
     stages: list[StageSpec]
     status_quo: float = 0.0  # crisis bargaining: alpha's share without a deal
     contract: ContractParams | None = None  # contract dynamics only
+    nuclear: NuclearParams | None = None  # nuclear crisis only
 
 
 class HorizonTreatment(BaseModel):
@@ -128,6 +174,7 @@ class TalkTreatment(BaseModel):
     messages: bool
     declared_action: bool
     declared_type: bool
+    declared_value: bool = False
 
 
 class NoiseTreatment(BaseModel):
@@ -169,6 +216,21 @@ class ContractBriefing(BaseModel):
     persuasion_rounds: int
 
 
+class NuclearBriefing(BaseModel):
+    """What a nuclear crisis player is told before its first move: its own worth."""
+
+    oil_fields: int
+    oil_value: float
+    towns: int  # of the player's own nationality
+    town_value: float
+    pass_value: float
+    opponent_value_range: tuple[float, float]
+    payoffs: Literal["jervis", "greedy"]
+    framing: Literal["military", "neutral"]
+    max_rounds: int | None  # None if the horizon is unknown
+    start: NuclearStart | None  # the rounds already played, for a mid-crisis start
+
+
 class ContractState(BaseModel):
     """The public state of a contract: its terms, then nature's draws."""
 
@@ -176,6 +238,17 @@ class ContractState(BaseModel):
     transfer: float
     shock: bool | None = None  # None until nature draws it
     bearer: PlayerId | None = None
+
+
+class NuclearState(BaseModel):
+    """The running state of a nuclear crisis."""
+
+    alpha_share: float = 0.5  # of the territory
+    oil_fields: int
+    costs: dict[PlayerId, float] = {"alpha": 0.0, "beta": 0.0}
+    nuclear_used: bool = False  # someone executed nuclear use (not just a threat)
+    calm_rounds: int = 0  # in a row, with both at Return to Start Line or milder
+    last_executed: dict[PlayerId, int] = {}  # each side's rung in the last round
 
 
 # What one player privately learns when a round ends. The game that sends it
@@ -188,7 +261,9 @@ class Observation(BaseModel):
 
     recipient: PlayerId
     round: int
-    briefing: Briefing | ContractBriefing | None = None  # only on the first move
+    briefing: Briefing | ContractBriefing | NuclearBriefing | None = (
+        None  # only on the first move
+    )
     contract: ContractState | None = None  # contract dynamics, once signed
     opponent_moves: list[Move] = []  # since the recipient's last move
     reports: list[Report] = []  # end-of-round reports since the recipient's last move
@@ -229,6 +304,7 @@ class RoundEnd(BaseModel):
 class EpisodeState(BaseModel):
     types: dict[PlayerId, PrivateType] = {}
     contract: ContractState | None = None  # contract dynamics, once signed
+    nuclear: NuclearState | None = None  # nuclear crisis
     rounds: list[RoundRecord] = []
     ending: Ending | None = None
     payoffs: dict[PlayerId, float] | None = None
