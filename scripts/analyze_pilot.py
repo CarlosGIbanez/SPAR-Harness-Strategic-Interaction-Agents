@@ -31,6 +31,7 @@ from pathlib import Path
 
 from inspect_ai.log import list_eval_logs, read_eval_log
 
+from spar_harness.contract_dynamics import expected_penalty, temptation
 from spar_harness.measures import contract_outcome_measures
 from spar_harness.schema import EpisodeConfig, EpisodeState
 
@@ -93,6 +94,7 @@ def _episode_row(task: str, sample, roles: dict[str, str]) -> dict | None:
         "model_b": models["b"],
         "setting": presentation.setting if presentation else "neutral",
         "prompt_arm": presentation.prompt_arm if presentation else "none",
+        "stated_promise": presentation.stated_promise if presentation else False,
         "severity": round(params.loss / params.disaster, 6),
         "transfers": _regime(params),
         "imposed": params.imposed_venture,
@@ -100,6 +102,8 @@ def _episode_row(task: str, sample, roles: dict[str, str]) -> dict | None:
         "K": stages["persuasion"].termination.max_rounds,
         "benefits": f"{benefits['alpha']:g}/{benefits['beta']:g}",
         "penalty": params.penalty,
+        "penalty_prob": getattr(params, "penalty_prob", 1.0),
+        "honor_cost_prob": getattr(params, "honor_cost_prob", 1.0),
         "ending": episode.ending,
     }
     row |= measures.model_dump(
@@ -119,8 +123,8 @@ def _episode_row(task: str, sample, roles: dict[str, str]) -> dict | None:
             "joint_payoff",
         }
     )
-    if params.imposed_venture:  # tau is defined by the fixed terms, t = 0
-        row["temptation"] = params.loss - params.disaster - params.penalty
+    if params.imposed_venture:  # tau is defined by the fixed terms
+        row["temptation"] = temptation(params, params.fixed_transfer or 0.0)
     bearer_seat = seats.get(bearer) if bearer else None
     decision = next(
         (record for record in episode.rounds if record.stage == "decision"), None
@@ -147,7 +151,11 @@ def _episode_row(task: str, sample, roles: dict[str, str]) -> dict | None:
         for probe in probes
         if probe["player"] == bearer and probe["probe_id"] == "comprehension"
     ]
-    truth = benefits[bearer] - params.disaster - params.penalty if bearer else None
+    truth = (
+        benefits[bearer] - params.disaster - expected_penalty(params)
+        if bearer
+        else None
+    )
     row["bearer_comprehension"] = (
         int(
             comprehension[0] is not None
@@ -174,6 +182,8 @@ def _opponent(controllers: dict[str, str], models: dict[str, str]) -> str:
 
 
 def _regime(params) -> str:
+    if params.fixed_transfer is not None:
+        return f"fixed {params.fixed_transfer:g}"
     if params.transfer_cap == 0:
         return "none"
     return (
@@ -229,7 +239,8 @@ def wilson(successes: int, n: int) -> tuple[float, float, float]:
     rate = successes / n
     centre = (rate + Z**2 / (2 * n)) / (1 + Z**2 / n)
     half = Z * math.sqrt(rate * (1 - rate) / n + Z**2 / (4 * n**2)) / (1 + Z**2 / n)
-    return rate, centre - half, centre + half
+    # Clamp the float noise that puts 0/n and n/n bounds a hair outside [0, 1].
+    return rate, max(0.0, centre - half), min(1.0, centre + half)
 
 
 def newcombe(k1: int, n1: int, k2: int, n2: int) -> tuple[float, float, float]:
@@ -330,12 +341,24 @@ def rate_cells(rows: list[dict]) -> dict:
     return {"n": len(rows), "honored": k, "rate": rate, "low": low, "high": high}
 
 
+def _arm(r: dict) -> str:
+    """The overview row an episode belongs to: imposed or the transfer regime,
+    then the penalty, so swept penalties and fixed transfers are never pooled."""
+    if r["imposed"]:
+        arm = "imposed" if r["transfers"] == "none" else f"imposed, {r['transfers']}"
+    else:
+        arm = f"transfers {r['transfers']}"
+    if r["penalty"] or r["penalty_prob"] < 1:
+        arm += f", penalty {r['penalty']:g} at p {r['penalty_prob']:g}"
+    return arm
+
+
 def overview(rows: list[dict], include_bots: bool) -> list[dict]:
     table = []
     for (arm, severity, opponent, k), group in group_by(
         rows,
         lambda r: (
-            "imposed" if r["imposed"] else f"transfers {r['transfers']}",
+            _arm(r),
             r["severity"],
             r["opponent"],
             r["K"],
@@ -477,7 +500,13 @@ def fairness(
     for (opponent, benefits), group in group_by(
         contracts, lambda r: (r["opponent"], r["benefits"])
     ).items():
-        deviation = mean_ci([r["equal_gains_deviation"] for r in group])
+        deviation = mean_ci(
+            [
+                r["equal_gains_deviation"]
+                for r in group
+                if r["equal_gains_deviation"] is not None  # None: fixed bearer
+            ]
+        )
         terms.append(
             {
                 "opponent": opponent,
@@ -552,7 +581,7 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         path.write_text("")
         return
     fields = list(dict.fromkeys(key for row in rows for key in row))
-    with path.open("w", newline="") as file:
+    with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
@@ -748,7 +777,7 @@ def main(argv: list[str] | None = None) -> None:
     ]
     if images:
         report += ["## Figures\n"] + [f"![{name}]({name})\n" for name in images]
-    (out / "report.md").write_text("\n".join(report))
+    (out / "report.md").write_text("\n".join(report), encoding="utf-8")
     print(
         f"Wrote {out / 'report.md'}, {len(tables)} CSV tables and {len(images)} figures."
     )

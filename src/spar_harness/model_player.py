@@ -64,6 +64,9 @@ class Presenter:
     tool: Callable[[Observation, PhaseContext], ToolInfo]
     parse: Callable[[PlayerId, dict[str, Any]], Move]  # raises InvalidMove
     probes: Probes  # private side calls made before the move
+    # Rewrites a referee error in the game's own words before the model reads
+    # it, e.g. the setting's action labels in place of internal action names.
+    error: Callable[[str], str] = lambda message: message
 
 
 def model_player(
@@ -77,6 +80,7 @@ def model_player(
     async def play(observation: Observation, context: PhaseContext) -> Move:
         nonlocal last_contract
         me = observation.recipient
+        error = presenter.error(context.error) if context.error else None
         if not tools:
             tools.extend([presenter.tool(observation, context), ANSWER_PROBE_TOOL])
         if observation.briefing is not None:
@@ -87,7 +91,7 @@ def model_player(
             )
         for tool_call_id, function in pending_tool_calls:
             if function == SUBMIT_MOVE:
-                feedback = context.error or "Move received."
+                feedback = error or "Move received."
             else:
                 feedback = f"Ignored: {function} is only for private questions."
             messages.append(
@@ -95,12 +99,10 @@ def model_player(
                     content=feedback, tool_call_id=tool_call_id, function=function
                 )
             )
-        if context.error and not pending_tool_calls:
-            messages.append(
-                ChatMessageUser(
-                    content=f"{context.error} Call {SUBMIT_MOVE} exactly once."
-                )
-            )
+        if error and not pending_tool_calls:
+            reminder = f"Call {SUBMIT_MOVE} exactly once."
+            content = error if "exactly once" in error else f"{error} {reminder}"
+            messages.append(ChatMessageUser(content=content))
         pending_tool_calls.clear()
         if context.error is None:
             if observation.contract == last_contract:

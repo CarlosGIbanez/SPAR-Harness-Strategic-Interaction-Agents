@@ -1,7 +1,9 @@
 """Pilot grid for contract dynamics: estimate tokens and dollars, then launch.
 
-The grid is the neutral setting with forced shocks, at each severity and
-transfer regime, with one model against the rational bot and in self-play.
+The grid uses forced shocks, at each severity and transfer regime, with one
+model against the rational bot and in self-play. The setting is neutral unless
+--setting names a story; --fixed-bearer lets only one side bear the cost (the
+captain setting needs it), and --shock-prob is the chance players are told.
 
     # Estimate only (free: no API calls). Prints tokens and dollars per cell.
     uv run python scripts/pilot.py estimate --model anthropic/claude-sonnet-5-5
@@ -33,7 +35,7 @@ import sys
 import tempfile
 import urllib.request
 import zlib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -42,6 +44,7 @@ from inspect_ai import eval, eval_set, task_with
 from inspect_ai.model import ChatMessage, ModelOutput, ModelUsage, get_model
 from inspect_ai.tool import ToolInfo
 
+from spar_harness.contract_framing import SETTINGS
 from spar_harness.contract_task import contract_dynamics
 
 # Dollars per million tokens (input, output), first-party API, no caching.
@@ -68,10 +71,16 @@ class Cell:
     opponent: str  # "rational" or "self"
     imposed_venture: bool = False
     persuasion_rounds: int = 0
+    fixed_transfer: float | None = None  # set by the game, not bargained over
+    penalty: float = 0.0  # extra loss for a bearer who reneges (maybe uncertain)
 
     @property
     def label(self) -> str:
         arm = "imposed" if self.imposed_venture else f"t-{self.transfers}"
+        if self.fixed_transfer is not None:
+            arm += f"-fixed{self.fixed_transfer:g}"
+        if self.penalty:
+            arm += f"-pen{self.penalty:g}"
         return (
             f"sev{self.severity:g}_{arm}_vs-{self.opponent}_K{self.persuasion_rounds}"
         )
@@ -82,10 +91,18 @@ def grid(args: argparse.Namespace) -> list[Cell]:
     for k in args.persuasion:
         for severity in args.severities:
             for opponent in args.opponents:
+                if args.fixed_transfers:  # each value is a signed and an imposed cell
+                    for t in args.fixed_transfers:
+                        cells.append(Cell(severity, "none", opponent, False, k, t))
+                        if args.imposed:
+                            cells.append(Cell(severity, "none", opponent, True, k, t))
+                    continue
                 for transfers in args.transfers:
                     cells.append(Cell(severity, transfers, opponent, False, k))
                 if args.imposed:  # no transfers in the imposed venture
                     cells.append(Cell(severity, "none", opponent, True, k))
+    if args.penalties:  # every cell at every swept penalty
+        cells = [replace(cell, penalty=p) for p in args.penalties for cell in cells]
     return cells
 
 
@@ -101,8 +118,15 @@ def cell_task(cell: Cell, args: argparse.Namespace):
         transfers=cell.transfers,
         persuasion_rounds=cell.persuasion_rounds,
         imposed_venture=cell.imposed_venture,
+        shock_prob=args.shock_prob,
         force_shock=True,
-        setting="neutral",
+        setting=args.setting,
+        fixed_bearer=args.fixed_bearer,
+        stated_promise=args.stated_promise,
+        fixed_transfer=cell.fixed_transfer,
+        penalty=cell.penalty,
+        penalty_prob=args.penalty_prob,
+        honor_cost_prob=args.honor_cost_prob,
     )
     return task_with(task, name=f"pilot_{cell.label}", metadata={"cell": asdict(cell)})
 
@@ -223,6 +247,13 @@ def estimate(args: argparse.Namespace) -> dict:
         "seeds": args.seeds,
         "episodes": len(rows) * 2 * args.seeds,
         "benefits": args.benefits,
+        "setting": args.setting,
+        "fixed_bearer": args.fixed_bearer,
+        "shock_prob": args.shock_prob,
+        "stated_promise": args.stated_promise,
+        "penalties": args.penalties,
+        "penalty_prob": args.penalty_prob,
+        "honor_cost_prob": args.honor_cost_prob,
         "margin": args.margin,
         "cells": rows,
         "total": totals,
@@ -247,7 +278,21 @@ def print_estimate(result: dict) -> None:
     print(f"Pilot estimate for {result['model']}, {result['date']}")
     print(
         f"{result['episodes']} episodes ({result['seeds']} seeds x 2 per cell), "
-        f"benefits {result['benefits']}, forced shocks, neutral setting\n"
+        f"benefits {result['benefits']}, forced shocks (told p = "
+        f"{result['shock_prob']:g}), {result['setting']} setting"
+        + (f", fixed bearer {result['fixed_bearer']}" if result["fixed_bearer"] else "")
+        + (", stated promise" if result["stated_promise"] else "")
+        + (
+            f", penalties {result['penalties']} at p {result['penalty_prob']:g}"
+            if result["penalties"]
+            else ""
+        )
+        + (
+            f", honoring costs with p {result['honor_cost_prob']:g}"
+            if result["honor_cost_prob"] < 1
+            else ""
+        )
+        + "\n"
     )
     print(f"{'cell':<36} {'calls':>11} {'input tok':>17} {'output tok':>17} {'$':>13}")
     for row in result["cells"]:
@@ -302,11 +347,17 @@ def run(args: argparse.Namespace) -> None:
     generate_args = {}
     if args.reasoning_effort:
         generate_args["reasoning_effort"] = args.reasoning_effort
+    # openai-api sends tools with strict: true by default, which OpenAI rejects
+    # because submit_move's fields are optional.
+    model = args.model
+    if args.model.startswith("openai-api/"):
+        accept_responses_usage()
+        model = get_model(args.model, strict_tools=False)
     success, _ = eval_set(
         [cell_task(cell, args) for cell in grid(args)],
         log_dir=str(log_dir),
-        model=args.model,
-        model_roles={"a": args.model, "b": args.model},
+        model=model,
+        model_roles={"a": model, "b": model},
         max_connections=args.max_connections,
         **generate_args,
     )
@@ -357,6 +408,50 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=[18.0, 18.0],
         metavar=("ALPHA", "BETA"),
         help="unequal benefits are needed for the fairness split",
+    )
+    parser.add_argument(
+        "--setting", choices=sorted(SETTINGS), default="neutral", help="story framing"
+    )
+    parser.add_argument(
+        "--fixed-bearer",
+        choices=["alpha", "beta"],
+        help="only this side can be the bearer; q is not negotiated",
+    )
+    parser.add_argument(
+        "--fixed-transfers",
+        type=float,
+        nargs="+",
+        help="sweep transfers set by the game (replaces --transfers); with "
+        "--imposed, the imposed venture carries each one too",
+    )
+    parser.add_argument(
+        "--penalties",
+        type=float,
+        nargs="+",
+        help="sweep the penalty for reneging; every cell runs at each value",
+    )
+    parser.add_argument(
+        "--penalty-prob",
+        type=float,
+        default=1.0,
+        help="chance the penalty is applied to a bearer who reneges",
+    )
+    parser.add_argument(
+        "--honor-cost-prob",
+        type=float,
+        default=1.0,
+        help="chance that honoring costs the bearer anything",
+    )
+    parser.add_argument(
+        "--stated-promise",
+        action="store_true",
+        help="contracts state the bearer agrees to take the cost, with a reminder",
+    )
+    parser.add_argument(
+        "--shock-prob",
+        type=float,
+        default=0.5,
+        help="chance of the shock players are told (every contract is shocked)",
     )
     parser.add_argument(
         "--api-key-var",
@@ -429,6 +524,36 @@ def use_endpoint(args: argparse.Namespace) -> None:
         elif target not in os.environ:
             sys.exit(f"Set {var} (or {target}) in .env.")
     args.endpoint = prefix
+
+
+def accept_responses_usage() -> None:
+    """Let Inspect read usage that names its fields the Responses-API way.
+
+    The Dartmouth proxy answers some chat completions (e.g. gpt-6-luna) with
+    input_tokens/output_tokens and a null prompt_tokens, which Inspect cannot
+    subtract from. This copies them into the chat-completions names first.
+    """
+    from inspect_ai.model._providers import openai_compatible
+    from openai.types.completion_usage import CompletionTokensDetails
+
+    original = openai_compatible.model_output_from_openai
+
+    def model_output_from_openai(completion, choices):
+        usage = completion.usage
+        if usage is not None and usage.prompt_tokens is None:
+            extra = usage.model_extra or {}
+            usage.prompt_tokens = extra.get("input_tokens") or 0
+            usage.completion_tokens = extra.get("output_tokens") or 0
+            reasoning = (extra.get("output_tokens_details") or {}).get(
+                "reasoning_tokens"
+            )
+            if usage.completion_tokens_details is None and reasoning is not None:
+                usage.completion_tokens_details = CompletionTokensDetails(
+                    reasoning_tokens=reasoning
+                )
+        return original(completion, choices)
+
+    openai_compatible.model_output_from_openai = model_output_from_openai
 
 
 def list_models(args: argparse.Namespace) -> None:

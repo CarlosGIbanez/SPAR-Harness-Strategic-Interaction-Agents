@@ -26,7 +26,9 @@ from spar_harness.schema import (
     Treatments,
 )
 
-CUE_WORDS = re.compile(r"\b(honou?r\w*|reneg\w*|sacrific\w*|betray\w*|duty)\b", re.IGNORECASE)
+CUE_WORDS = re.compile(
+    r"\b(honou?r\w*|reneg\w*|sacrific\w*|betray\w*|duty)\b", re.IGNORECASE
+)
 
 
 def params(**overrides):
@@ -82,6 +84,16 @@ def test_no_setting_shows_a_cue_word(setting, imposed_venture):
     assert CUE_WORDS.findall(text) == []
     labels = SETTINGS[setting]
     assert labels.bear in text and labels.decline in text
+
+
+@pytest.mark.parametrize("setting", list(SETTINGS))
+@pytest.mark.parametrize("imposed_venture", [False, True])
+def test_the_side_that_takes_the_cost_has_its_settings_name_not_bearer(
+    setting, imposed_venture
+):
+    text = model_facing_text(setting, imposed_venture, penalty=5.0)
+    assert "bearer" not in text.lower().replace("probability_you_bear", "")
+    assert SETTINGS[setting].taker in text
 
 
 def test_settings_change_the_story_but_not_the_numbers():
