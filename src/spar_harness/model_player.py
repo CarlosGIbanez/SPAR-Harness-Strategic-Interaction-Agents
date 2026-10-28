@@ -39,6 +39,9 @@ Ask = Callable[[str], Awaitable[float | None]]
 Probes = Callable[
     [Ask, PlayerId, Observation, PhaseContext], Awaitable[list[ProbeResponse]]
 ]
+# An opening side call made after the probes; the text it returns is added to the
+# conversation as a user message the model keeps seeing (None adds nothing).
+Opening = Callable[[Ask, PlayerId, Observation, PhaseContext], Awaitable[str | None]]
 
 # Signed reasoning is bound to the tools list it was created with, so a
 # conversation must offer exactly the same tools on every call, probes included.
@@ -67,7 +70,10 @@ class Presenter:
 
 
 def model_player(
-    model: Model, probe_log: list[ProbeResponse], presenter: Presenter
+    model: Model,
+    probe_log: list[ProbeResponse],
+    presenter: Presenter,
+    opening: Opening | None = None,
 ) -> Player:
     messages: list[ChatMessage] = []
     pending_tool_calls: list[tuple[str, str]] = []  # (id, function) awaiting a result
@@ -116,6 +122,10 @@ def model_player(
                 return await ask_probe(model, messages, tools, question)
 
             probe_log.extend(await presenter.probes(ask, me, observation, context))
+            if opening is not None:
+                note = await opening(ask, me, observation, context)
+                if note is not None:
+                    messages.append(ChatMessageUser(content=note))
 
         output = await model.generate(messages, tools=tools)
         messages.append(output.message)

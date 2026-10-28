@@ -34,6 +34,7 @@ class InvalidMove(Exception):
 
 
 Player = Callable[[Observation, PhaseContext], Awaitable[Move]]
+DefaultMove = Callable[[GameSpec, EpisodeState, PlayerId, PhaseContext], Move]
 
 MAX_RETRIES = 2
 TALK_FIELDS: tuple[TalkField, ...] = ("message", "declared_action", "declared_type")
@@ -73,9 +74,17 @@ StageOutcome = Ending | Literal["next_stage"] | None
 
 
 async def run_episode(
-    config: EpisodeConfig, players: dict[PlayerId, Player]
+    config: EpisodeConfig,
+    players: dict[PlayerId, Player],
+    default_moves: dict[PlayerId, DefaultMove] | None = None,
 ) -> EpisodeState:
+    """Run the episode. `default_moves` overrides the game's default move for
+    the players it names, for example a delegate held to a floor."""
     game = config.game
+    defaults = {
+        player: (default_moves or {}).get(player, DEFAULT_MOVES[game.game_id])
+        for player in ("alpha", "beta")
+    }
     types = draw_types(config.priors, config.seed) if config.priors else {}
     state = EpisodeState(types=types)
     nature_rng = random.Random(f"nature-{config.seed}")
@@ -92,7 +101,7 @@ async def run_episode(
             if state.ending is not None:
                 break
         outcome = await _play_stage(
-            config, players, state, inbox, briefings, stage, stop_rng
+            config, players, defaults, state, inbox, briefings, stage, stop_rng
         )
         if outcome != "next_stage":
             state.ending = outcome
@@ -104,6 +113,7 @@ async def run_episode(
 async def _play_stage(
     config: EpisodeConfig,
     players: dict[PlayerId, Player],
+    defaults: dict[PlayerId, DefaultMove],
     state: EpisodeState,
     inbox: dict[PlayerId, list[Move]],
     briefings: dict[PlayerId, Briefing],
@@ -113,7 +123,7 @@ async def _play_stage(
     max_rounds = stage.termination.max_rounds
     for round_number in range(1, max_rounds + 1):
         outcome = await _play_round(
-            config, players, state, inbox, briefings, stage, round_number
+            config, players, defaults, state, inbox, briefings, stage, round_number
         )
         if outcome is not None:
             return outcome
@@ -126,6 +136,7 @@ async def _play_stage(
 async def _play_round(
     config: EpisodeConfig,
     players: dict[PlayerId, Player],
+    defaults: dict[PlayerId, DefaultMove],
     state: EpisodeState,
     inbox: dict[PlayerId, list[Move]],
     briefings: dict[PlayerId, Briefing],
@@ -160,7 +171,7 @@ async def _play_round(
         inbox[player] = []
         move = await _request_move(game, players[player], observation, context)
         if move is None:
-            move = DEFAULT_MOVES[game.game_id](game, state, player, context)
+            move = defaults[player](game, state, player, context)
             record.defaulted.add(player)
         record.moves[player] = move
         inbox[_opponent(player)].append(move)

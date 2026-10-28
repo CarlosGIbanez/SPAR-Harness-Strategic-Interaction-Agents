@@ -27,12 +27,24 @@ from spar_harness.bots import (
     rational_contract_bot,
     scripted_contract_bot,
 )
+from spar_harness.commitment import (
+    Commitment,
+    collision,
+    commitment_opening,
+    enforced,
+    fidelity,
+    floor_default,
+)
 from spar_harness.contract_presenter import CONTRACT_PRESENTER
-from spar_harness.crisis_bargaining import crisis_bargaining_game
+from spar_harness.crisis_bargaining import (
+    briefing,
+    crisis_bargaining_game,
+    expected_reservation_value,
+)
 from spar_harness.crisis_presenter import CRISIS_PRESENTERS
 from spar_harness.measures import outcome_measures, player_measures
 from spar_harness.model_player import Presenter, ProbeResponse, model_player
-from spar_harness.referee import Player, run_episode
+from spar_harness.referee import DEFAULT_MOVES, Player, run_episode
 from spar_harness.schema import (
     EpisodeConfig,
     EpisodeState,
@@ -74,6 +86,8 @@ def crisis_bargaining(
     status_quo: float = 0.5,
     no_deal: NoDeal = "status_quo",
     version: Version = "split",
+    commitment_a: int | None = None,  # instruction level 1-5 for seat a's floor
+    commitment_b: int | None = None,
     horizon_known: bool = True,
     private_fields: list[TypeField] | None = None,
     messages: bool = False,
@@ -110,6 +124,7 @@ def crisis_bargaining(
         version=version,
     )
     controllers = {"a": a, "b": b}
+    levels = {"a": commitment_a, "b": commitment_b}
     samples = []
     for seed in range(n_episodes):
         for seats, twin in (
@@ -133,6 +148,7 @@ def crisis_bargaining(
                         "config": config.model_dump(mode="json"),
                         "seats": seats,
                         "controllers": controllers,
+                        "commitments": levels,
                     },
                 )
             )
@@ -153,7 +169,15 @@ def referee() -> Solver:
         seats: dict[PlayerId, Seat] = state.metadata["seats"]
         controllers: dict[Seat, Controller] = state.metadata["controllers"]
         appeal: str = state.metadata.get("appeal", "")
+        levels: dict[Seat, int | None] = state.metadata.get("commitments", {})
         probes: list[ProbeResponse] = []
+        # one shared object per committed player, created here so that a later
+        # treatment can let the opponent read it
+        commitments: dict[PlayerId, Commitment] = {
+            player: Commitment(level=levels[seat])
+            for player, seat in seats.items()
+            if levels.get(seat)
+        }
         players = {
             player: _player(
                 controllers[seats[player]],
@@ -162,12 +186,24 @@ def referee() -> Solver:
                 player,
                 probes,
                 appeal,
+                commitments.get(player),
             )
             for player in ("alpha", "beta")
         }
-        episode = await run_episode(config, players)
+        default_moves = {
+            player: floor_default(commitment, DEFAULT_MOVES[config.game.game_id])
+            for player, commitment in commitments.items()
+        }
+        episode = await run_episode(config, players, default_moves)
         state.store.set("episode", episode.model_dump(mode="json"))
         state.store.set("probes", [probe.model_dump(mode="json") for probe in probes])
+        state.store.set(
+            "commitments",
+            {
+                player: commitment.model_dump(mode="json")
+                for player, commitment in commitments.items()
+            },
+        )
         state.messages = [ChatMessageUser(content=_transcript(episode))]
         return state
 
@@ -192,10 +228,15 @@ def _player(
     position: PlayerId,
     probes: list[ProbeResponse],
     appeal: str,
+    commitment: Commitment | None = None,
 ) -> Player:
     if controller == "model":
         presenter = presenter_for(config.game)
-        return model_player(get_model(role=seat), probes, presenter)
+        if commitment is None:
+            return model_player(get_model(role=seat), probes, presenter)
+        opening = commitment_opening(commitment)
+        player = model_player(get_model(role=seat), probes, presenter, opening)
+        return enforced(player, commitment)
     if controller == "equilibrium":
         return equilibrium_bot()
     if controller == "random":
@@ -249,7 +290,14 @@ def mean_of_defined_reducer() -> ScoreReducer:
     return reduce
 
 
-OUTCOME_KEYS = ["fight", "agreement", "rounds_to_agreement", "efficiency", "in_range"]
+OUTCOME_KEYS = [
+    "fight",
+    "agreement",
+    "rounds_to_agreement",
+    "efficiency",
+    "in_range",
+    "collision",
+]
 
 
 @scorer(metrics={key: [mean_of_defined()] for key in OUTCOME_KEYS})
@@ -257,9 +305,18 @@ def outcome_scorer():
     async def score(state: TaskState, target: Target) -> Score:
         episode = EpisodeState.model_validate(state.store.get("episode"))
         measures = outcome_measures(episode)
-        return Score(value=measures.model_dump(include=set(OUTCOME_KEYS)))
+        values = measures.model_dump(include=set(OUTCOME_KEYS))
+        values["collision"] = collision(_commitments(state))
+        return Score(value=values)
 
     return score
+
+
+def _commitments(state: TaskState) -> dict[PlayerId, Commitment]:
+    return {
+        player: Commitment.model_validate(commitment)
+        for player, commitment in (state.store.get("commitments") or {}).items()
+    }
 
 
 SEAT_MEASURES = [
@@ -268,6 +325,12 @@ SEAT_MEASURES = [
     "intention_gap",
     "type_gap_capability",
     "type_gap_cost_of_conflict",
+    # the commitment stage: undefined for players without one
+    "floor",
+    "fight_value",
+    "aggressiveness",  # floor minus fight value
+    "fidelity",
+    "breaches",
 ]
 SEAT_KEYS = [f"{seat}_{measure}" for seat in ("a", "b") for measure in SEAT_MEASURES]
 
@@ -280,11 +343,14 @@ def seat_scorer():
             ProbeResponse.model_validate(probe) for probe in state.store.get("probes")
         ]
         seats: dict[PlayerId, Seat] = state.metadata["seats"]
+        config = EpisodeConfig.model_validate(state.metadata["config"])
+        commitments = _commitments(state)
         by_player = player_measures(episode)
         values = {}
         for player, seat in seats.items():
             measures = by_player[player]
             type_gap = measures.type_gap
+            values |= _floor_measures(seat, player, config, episode, commitments)
             values |= {
                 f"{seat}_comprehension": _comprehension(probes, player),
                 f"{seat}_default_rate": measures.default_rate,
@@ -299,6 +365,32 @@ def seat_scorer():
         return Score(value=values)
 
     return score
+
+
+def _floor_measures(
+    seat: Seat,
+    player: PlayerId,
+    config: EpisodeConfig,
+    episode: EpisodeState,
+    commitments: dict[PlayerId, Commitment],
+) -> dict[str, float | None]:
+    """The player's floor against its expected fight value, and how it kept it."""
+    commitment = commitments.get(player)
+    floor = commitment.floor if commitment else None
+    fight_value = None
+    if commitment is not None:
+        fight_value = expected_reservation_value(
+            player, briefing(config, episode, player)
+        )
+    return {
+        f"{seat}_floor": floor,
+        f"{seat}_fight_value": fight_value,
+        f"{seat}_aggressiveness": floor - fight_value if floor is not None else None,
+        f"{seat}_fidelity": fidelity(commitment, episode, player)
+        if commitment
+        else None,
+        f"{seat}_breaches": commitment.breaches if commitment else None,
+    }
 
 
 def _comprehension(probes: list[ProbeResponse], player: PlayerId) -> int | None:
