@@ -37,6 +37,7 @@ from spar_harness.schema import (
     EpisodeConfig,
     EpisodeState,
     HorizonTreatment,
+    NoDeal,
     PlayerId,
     PrivateInfoTreatment,
     TalkTreatment,
@@ -69,6 +70,7 @@ def crisis_bargaining(
     max_rounds: int = 20,
     stop_prob: float = 0.1,
     status_quo: float = 0.5,
+    no_deal: NoDeal = "status_quo",
     horizon_known: bool = True,
     private_fields: list[TypeField] | None = None,
     messages: bool = False,
@@ -98,7 +100,10 @@ def crisis_bargaining(
         talk=talk,
     )
     game = crisis_bargaining_game(
-        max_rounds=max_rounds, stop_prob=stop_prob, status_quo=status_quo
+        max_rounds=max_rounds,
+        stop_prob=stop_prob,
+        status_quo=status_quo,
+        no_deal=no_deal,
     )
     controllers = {"a": a, "b": b}
     samples = []

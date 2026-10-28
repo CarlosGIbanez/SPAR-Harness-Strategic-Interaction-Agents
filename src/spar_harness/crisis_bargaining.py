@@ -10,6 +10,7 @@ from spar_harness.schema import (
     EpisodeState,
     GameSpec,
     Move,
+    NoDeal,
     Offer,
     PartialType,
     PhaseContext,
@@ -51,8 +52,10 @@ def outcome_payoffs(
     types: dict[PlayerId, PrivateType],
     status_quo: float,
     split: float | None = None,
+    no_deal: NoDeal = "status_quo",
 ) -> dict[PlayerId, float]:
-    """Each player's payoff when the episode ends."""
+    """Each player's payoff when the episode ends. Without a deal, the status
+    quo is split, or nobody gets anything."""
     if ending == "fight":
         p = win_probability(types["alpha"].capability, types["beta"].capability)
         return {
@@ -61,11 +64,16 @@ def outcome_payoffs(
         }
     if ending == "agreement":
         return {"alpha": split, "beta": 1 - split}
+    if no_deal == "nothing":
+        return {"alpha": 0.0, "beta": 0.0}
     return {"alpha": status_quo, "beta": 1 - status_quo}
 
 
 def crisis_bargaining_game(
-    max_rounds: int, stop_prob: float, status_quo: float
+    max_rounds: int,
+    stop_prob: float,
+    status_quo: float,
+    no_deal: NoDeal = "status_quo",
 ) -> GameSpec:
     """Alternating offers: each round the proposer offers and the responder answers."""
     return GameSpec(
@@ -82,6 +90,7 @@ def crisis_bargaining_game(
             )
         ],
         status_quo=status_quo,
+        no_deal=no_deal,
     )
 
 
@@ -104,7 +113,9 @@ def episode_payoffs(game: GameSpec, state: EpisodeState) -> dict[PlayerId, float
     if state.ending == "agreement":
         last_round = state.rounds[-1]
         split = last_round.moves[last_round.proposer].action.split
-    return outcome_payoffs(state.ending, state.types, game.status_quo, split)
+    return outcome_payoffs(
+        state.ending, state.types, game.status_quo, split, game.no_deal
+    )
 
 
 def default_move(
@@ -133,6 +144,7 @@ def briefing(config: EpisodeConfig, state: EpisodeState, player: PlayerId) -> Br
         opponent_prior=config.priors[opponent] if private_info else None,
         private_fields=private_fields,
         status_quo=config.game.status_quo,
+        no_deal=config.game.no_deal,
         termination=stage.termination if config.treatments.horizon.known else None,
     )
 

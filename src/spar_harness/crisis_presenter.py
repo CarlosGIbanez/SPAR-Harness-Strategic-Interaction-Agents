@@ -47,8 +47,8 @@ How the episode ends:
 - Fight: either player may fight on their move. A fight ends the episode. Your \
 payoff is your probability of winning minus your cost of conflict. Your probability \
 of winning is your capability divided by the sum of both capabilities.
-- No deal: if the episode stops without agreement or a fight, the status quo \
-division is applied.
+- No deal: if the episode stops without agreement or a fight, each player gets \
+the no-deal payoff stated at the start.
 """
 
 COMPREHENSION_QUESTION = (
@@ -195,8 +195,16 @@ def _render_briefing(me: PlayerId, briefing: Briefing) -> list[str]:
                 f"Your opponent's {label(field)} is private: it was drawn uniformly "
                 f"between {prior.low:g} and {prior.high:g}."
             )
-    status_quo_share = briefing.status_quo if me == "alpha" else 1 - briefing.status_quo
-    lines.append(f"Under the status quo you get {status_quo_share:g} of the stake.")
+    if briefing.no_deal == "nothing":
+        lines.append("If the episode ends without a deal or a fight, you get nothing.")
+    else:
+        status_quo_share = (
+            briefing.status_quo if me == "alpha" else 1 - briefing.status_quo
+        )
+        lines.append(
+            f"If the episode ends without a deal or a fight, you get "
+            f"{status_quo_share:g} of the stake (the status quo)."
+        )
     if briefing.termination is None:
         lines.append("You are not told when the episode will end.")
     else:

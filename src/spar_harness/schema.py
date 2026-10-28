@@ -86,6 +86,7 @@ class Move(BaseModel):
 
 
 GameId = Literal["crisis_bargaining", "contract_dynamics"]
+NoDeal = Literal["status_quo", "nothing"]  # what a crisis episode pays without a deal
 Role = Literal["proposer", "responder", "bearer", "other"]
 ActionKind = Literal["offer", "response", "message", "decision"]
 
@@ -113,6 +114,7 @@ class GameSpec(BaseModel):
     game_id: GameId
     stages: list[StageSpec]
     status_quo: float = 0.0  # crisis bargaining: alpha's share without a deal
+    no_deal: NoDeal = "status_quo"  # crisis bargaining: "nothing" pays 0 to both
     contract: ContractParams | None = None  # contract dynamics only
 
 
@@ -153,6 +155,7 @@ class Briefing(BaseModel):
     opponent_prior: TypePrior | None  # None under complete information
     private_fields: set[TypeField]
     status_quo: float
+    no_deal: NoDeal = "status_quo"
     termination: TerminationSpec | None  # None if the horizon is unknown
 
 

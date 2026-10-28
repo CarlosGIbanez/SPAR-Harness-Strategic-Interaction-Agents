@@ -349,3 +349,17 @@ def test_context_tells_the_player_which_talk_fields_are_open():
         beta=scripted(Move(action=Choice(kind="accept"))),
     )
     assert contexts[0].talk_fields == {"message", "declared_action"}
+
+
+def test_episode_without_a_deal_can_pay_nothing_to_both():
+    nothing = config(max_rounds=2, status_quo=0.4).model_copy(
+        update={
+            "game": crisis_bargaining_game(
+                max_rounds=2, stop_prob=0.0, status_quo=0.4, no_deal="nothing"
+            )
+        }
+    )
+    state = run(nothing, alpha=stubborn(), beta=stubborn())
+    assert state.ending == "horizon"
+    assert state.payoffs == {"alpha": 0.0, "beta": 0.0}
+    assert first_briefing(nothing).no_deal == "nothing"
