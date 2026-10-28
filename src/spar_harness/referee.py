@@ -62,7 +62,10 @@ DEFAULT_MOVES = {
 # nature's moves before each stage; games without any are absent
 BEFORE_STAGE = {"contract_dynamics": contract_dynamics.before_stage}
 # game-specific rules a move must satisfy; they return a problem or None
-MOVE_CHECKS = {"contract_dynamics": contract_dynamics.move_problem}
+MOVE_CHECKS = {
+    "crisis_bargaining": crisis_bargaining.move_problem,
+    "contract_dynamics": contract_dynamics.move_problem,
+}
 # players for roles other than proposer and responder
 ACTOR_RULES = {"contract_dynamics": contract_dynamics.actor_for}
 

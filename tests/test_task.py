@@ -169,3 +169,45 @@ def test_a_stray_probe_call_next_to_a_valid_move_is_ignored():
             assert result.text == "Move received."
         else:
             assert result.function == "answer_probe" and "Ignored" in result.text
+
+
+OFFERS = {  # what the mock offers in each version: it keeps 0.6 (strict: takes)
+    "split": {"action": "offer", "own_share": 0.6},
+    "strict": {"action": "offer", "you_take": True},
+    "lottery": {"action": "offer", "your_chance": 0.6},
+    "payment": {"action": "offer", "you_take": True, "payment": 0.4},
+}
+
+
+def versioned_model(version):
+    def generate(input, tools, tool_choice, config):
+        if is_probe(input):
+            return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 0.4})
+        if "You are the proposer" in last_user_text(input):
+            return ModelOutput.for_tool_call("mock", "submit_move", OFFERS[version])
+        return ModelOutput.for_tool_call("mock", "submit_move", {"action": "accept"})
+
+    return generate
+
+
+def test_model_plays_every_version_against_the_equilibrium_bot():
+    for version in OFFERS:
+        [log] = eval(
+            crisis_bargaining(
+                n_episodes=1,
+                a="model",
+                b="equilibrium",
+                version=version,
+                no_deal="nothing",
+            ),
+            model_roles={
+                "a": get_model("mockllm/model", custom_outputs=versioned_model(version))
+            },
+            display="none",
+            log_dir="logs/tests",
+        )
+        assert log.status == "success", version
+        for sample in log.samples:
+            episode = sample.store["episode"]
+            assert all(not record["defaulted"] for record in episode["rounds"])
+        same_tools_throughout(log)

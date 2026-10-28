@@ -69,7 +69,9 @@ def equilibrium_bot() -> Player:
         declared_type = _truthful_declaration(briefing.own_type, context)
         if context.role == "proposer":
             opponents = possible_opponent_types(briefing)
-            my_share = _risk_return_share(me, briefing.own_type, opponents)
+            # strict: the good goes whole to one side, so a share is 0 or 1
+            candidates = [0.0, 1.0] if briefing.version == "strict" else None
+            my_share = _risk_return_share(me, briefing.own_type, opponents, candidates)
             split = my_share if me == "alpha" else 1 - my_share
             return Move(action=Offer(split=split), declared_type=declared_type)
         offer = observation.opponent_moves[-1].action
@@ -90,13 +92,17 @@ def _truthful_declaration(
 
 
 def _risk_return_share(
-    me: PlayerId, own: PrivateType, opponents: list[PrivateType]
+    me: PlayerId,
+    own: PrivateType,
+    opponents: list[PrivateType],
+    candidates: list[float] | None = None,
 ) -> float:
     """The share to keep that maximizes expected payoff against the opponent prior.
 
     Assumes each possible opponent accepts exactly when its share reaches its own
     reservation value. Expected payoff only changes at those thresholds, so the
-    best offer is one of them.
+    best offer is one of them, unless the game restricts the offers that can be
+    made: then `candidates` lists the shares that may be conceded.
     """
     outcomes = sorted(
         (
@@ -116,9 +122,10 @@ def _risk_return_share(
         )
         return (accepted * (1 - offered) + rejected_fight) / len(outcomes)
 
-    candidates = sorted(
-        {min(max(threshold, 0.0), 1.0) for threshold in thresholds} | {0.0}
-    )
+    if candidates is None:
+        candidates = sorted(
+            {min(max(threshold, 0.0), 1.0) for threshold in thresholds} | {0.0}
+        )
     best_payoff = max(expected_payoff(offered) for offered in candidates)
     # Among (near-)equally good offers, make the most generous: it risks the least war.
     best_offer = max(

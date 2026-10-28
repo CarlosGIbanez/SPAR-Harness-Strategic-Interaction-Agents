@@ -29,13 +29,14 @@ from spar_harness.bots import (
 )
 from spar_harness.contract_presenter import CONTRACT_PRESENTER
 from spar_harness.crisis_bargaining import crisis_bargaining_game
-from spar_harness.crisis_presenter import CRISIS_PRESENTER
+from spar_harness.crisis_presenter import CRISIS_PRESENTERS
 from spar_harness.measures import outcome_measures, player_measures
-from spar_harness.model_player import ProbeResponse, model_player
+from spar_harness.model_player import Presenter, ProbeResponse, model_player
 from spar_harness.referee import Player, run_episode
 from spar_harness.schema import (
     EpisodeConfig,
     EpisodeState,
+    GameSpec,
     HorizonTreatment,
     NoDeal,
     PlayerId,
@@ -45,6 +46,7 @@ from spar_harness.schema import (
     TypeField,
     TypePrior,
     UniformPrior,
+    Version,
 )
 
 Controller = Literal[
@@ -71,6 +73,7 @@ def crisis_bargaining(
     stop_prob: float = 0.1,
     status_quo: float = 0.5,
     no_deal: NoDeal = "status_quo",
+    version: Version = "split",
     horizon_known: bool = True,
     private_fields: list[TypeField] | None = None,
     messages: bool = False,
@@ -104,6 +107,7 @@ def crisis_bargaining(
         stop_prob=stop_prob,
         status_quo=status_quo,
         no_deal=no_deal,
+        version=version,
     )
     controllers = {"a": a, "b": b}
     samples = []
@@ -171,9 +175,14 @@ def referee() -> Solver:
 
 
 PRESENTERS = {
-    "crisis_bargaining": CRISIS_PRESENTER,
+    "crisis_bargaining": CRISIS_PRESENTERS,  # one per version
     "contract_dynamics": CONTRACT_PRESENTER,
 }
+
+
+def presenter_for(game: GameSpec) -> Presenter:
+    presenter = PRESENTERS[game.game_id]
+    return presenter[game.version] if isinstance(presenter, dict) else presenter
 
 
 def _player(
@@ -185,7 +194,7 @@ def _player(
     appeal: str,
 ) -> Player:
     if controller == "model":
-        presenter = PRESENTERS[config.game.game_id]
+        presenter = presenter_for(config.game)
         return model_player(get_model(role=seat), probes, presenter)
     if controller == "equilibrium":
         return equilibrium_bot()
