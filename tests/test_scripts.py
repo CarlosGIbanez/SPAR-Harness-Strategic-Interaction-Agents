@@ -56,6 +56,45 @@ def test_the_floors_script_asks_each_position_in_the_episodes_own_words():
     assert "state your floor" in questions[-1].lower()
 
 
+def test_the_floors_script_hides_private_fields_and_logs_fidelity(capsys):
+    floors = load("commitment_floors")
+    args = type(
+        "Args",
+        (),
+        {
+            "private_fields": ["capability", "cost_of_conflict"],
+            "max_rounds": 20,
+            "stop_prob": 0.1,
+            "status_quo": 0.5,
+            "no_deal": "nothing",
+        },
+    )()
+    config = floors.config_for(args, "strict", seed=2)
+    assert config.treatments.private_info.private_fields == {
+        "capability",
+        "cost_of_conflict",
+    }
+    row = {
+        "level": 5,
+        "version": "strict",
+        "seed": 2,
+        "repeat": 0,
+        "position": "alpha",
+        "floor": 0.9,
+        "fight_value": 0.4,
+        "aggressiveness": 0.5,
+        "fidelity": 1,
+    }
+    floors.log_call(row)
+    assert "floor=0.900" in capsys.readouterr().err
+    floors.summarize(
+        [row, row | {"floor": None, "aggressiveness": None, "fidelity": None}]
+    )
+    out = capsys.readouterr().out
+    assert "fidelity" in out
+    assert "    5    2       1   0.500   0.500   1.00     1.00" in out
+
+
 def test_the_seed_diff_script_joins_two_arms_on_seed():
     logs = []
     for version in ("strict", "lottery"):

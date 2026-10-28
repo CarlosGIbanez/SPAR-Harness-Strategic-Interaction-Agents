@@ -3,12 +3,15 @@
 For each instruction level, version and seed, each position gets the briefing
 a real episode would give it, is asked the commitment question in the same
 side call the episode uses, and its floor is logged next to its expected
-fight value. Nothing else is played, so a run is one short call per row.
+fight value, its aggressiveness (floor minus fight value) and its fidelity
+(1 if the floor sits on the side of the fight value the level predicts). Each
+call is also logged as one line on stderr as it completes. Nothing else is
+played, so a run is one short call per row.
 
 Example:
     uv run python scripts/commitment_floors.py --model anthropic/claude-sonnet-5-5 \\
         --levels 1 2 3 4 5 --versions strict lottery payment --seeds 20 \\
-        --out floors.csv
+        --private-fields capability cost_of_conflict --out floors.csv
 
 The first observation of a real episode also carries the round prompt, and for
 beta the opponent's opening offer. Here both positions see the briefing and
@@ -19,11 +22,17 @@ import argparse
 import asyncio
 import csv
 import statistics
+import sys
 from pathlib import Path
 
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser, get_model
 
-from spar_harness.commitment import COMMITMENT_QUESTION, instruction_text
+from spar_harness.commitment import (
+    COMMITMENT_QUESTION,
+    Commitment,
+    fidelity,
+    instruction_text,
+)
 from spar_harness.crisis_bargaining import (
     briefing,
     crisis_bargaining_game,
@@ -61,6 +70,7 @@ FIELDS = [
     "fight_value",
     "floor",
     "aggressiveness",
+    "fidelity",
 ]
 
 
@@ -77,7 +87,13 @@ def parse_args() -> argparse.Namespace:
         "--no-deal", default="nothing", choices=["status_quo", "nothing"]
     )
     parser.add_argument("--status-quo", type=float, default=0.5)
-    parser.add_argument("--private-fields", nargs="*", default=[])
+    parser.add_argument(
+        "--private-fields",
+        nargs="*",
+        default=[],
+        choices=["capability", "cost_of_conflict"],
+        help="type fields hidden from the opponent, as in the episode treatment",
+    )
     parser.add_argument("--max-rounds", type=int, default=20)
     parser.add_argument("--stop-prob", type=float, default=0.1)
     parser.add_argument("--concurrency", type=int, default=8)
@@ -160,7 +176,7 @@ async def main() -> None:
             fight_value, floor = await ask_floor(model, config, position, level)
         types = draw_types(config.priors, seed)
         other = "beta" if position == "alpha" else "alpha"
-        return {
+        row = {
             "level": level,
             "version": version,
             "seed": seed,
@@ -173,7 +189,10 @@ async def main() -> None:
             "fight_value": fight_value,
             "floor": floor,
             "aggressiveness": None if floor is None else floor - fight_value,
+            "fidelity": fidelity(Commitment(level=level, floor=floor), fight_value),
         }
+        log_call(row)
+        return row
 
     rows = await asyncio.gather(*(run(job) for job in jobs))
     with args.out.open("w", newline="") as file:
@@ -184,22 +203,42 @@ async def main() -> None:
     summarize(rows)
 
 
-def summarize(rows: list[dict]) -> None:
-    """Floor minus fight value by level: median, mean, and the share above zero."""
+def log_call(row: dict) -> None:
+    """One line per call, as it completes."""
+
+    def fmt(value: float | None) -> str:
+        return "none" if value is None else f"{value:.3f}"
+
     print(
-        f"{'level':>5} {'n':>4} {'missing':>7} {'median':>7} {'mean':>7} {'above':>6}"
+        f"level={row['level']} {row['version']} seed={row['seed']} "
+        f"rep={row['repeat']} {row['position']}: floor={fmt(row['floor'])} "
+        f"fight_value={row['fight_value']:.3f} "
+        f"aggressiveness={fmt(row['aggressiveness'])} fidelity={row['fidelity']}",
+        file=sys.stderr,
+    )
+
+
+def summarize(rows: list[dict]) -> None:
+    """By level: floor minus fight value (median, mean, share above zero), the
+    fidelity rate and the number of unparseable floors."""
+    print(
+        f"{'level':>5} {'n':>4} {'missing':>7} {'median':>7} {'mean':>7} "
+        f"{'above':>6} {'fidelity':>8}"
     )
     for level in sorted({row["level"] for row in rows}):
         at_level = [row for row in rows if row["level"] == level]
-        gaps = [row["aggressiveness"] for row in at_level if row["floor"] is not None]
+        stated = [row for row in at_level if row["floor"] is not None]
+        gaps = [row["aggressiveness"] for row in stated]
         missing = len(at_level) - len(gaps)
         if not gaps:
             print(f"{level:>5} {len(at_level):>4} {missing:>7}")
             continue
         above = sum(gap > 0 for gap in gaps) / len(gaps)
+        faithful = sum(row["fidelity"] for row in stated) / len(stated)
         print(
             f"{level:>5} {len(at_level):>4} {missing:>7} "
-            f"{statistics.median(gaps):>7.3f} {statistics.mean(gaps):>7.3f} {above:>6.2f}"
+            f"{statistics.median(gaps):>7.3f} {statistics.mean(gaps):>7.3f} "
+            f"{above:>6.2f} {faithful:>8.2f}"
         )
 
 
