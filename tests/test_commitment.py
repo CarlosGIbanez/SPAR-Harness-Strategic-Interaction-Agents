@@ -11,6 +11,7 @@ from inspect_ai.model import ModelOutput, get_model
 from spar_harness.commitment import (
     Commitment,
     collision,
+    compliance,
     enforced,
     fidelity,
     floor_default,
@@ -188,7 +189,7 @@ def test_in_the_strict_version_the_floor_default_is_a_claim():
 # measures
 
 
-def test_fidelity_counts_kept_moves_against_breaches():
+def test_compliance_counts_kept_moves_against_breaches():
     state = EpisodeState(
         rounds=[
             RoundRecord(round=1, proposer="alpha", moves={"alpha": offer(0.7)}),
@@ -201,9 +202,28 @@ def test_fidelity_counts_kept_moves_against_breaches():
             RoundRecord(round=3, proposer="alpha", moves={"alpha": offer(0.7)}),
         ]
     )
-    assert fidelity(Commitment(level=3, floor=0.7, breaches=2), state, "alpha") == 0.5
-    assert fidelity(Commitment(level=3, floor=0.7), state, "alpha") == 1.0
-    assert fidelity(Commitment(level=3), state, "alpha") is None
+    assert compliance(Commitment(level=3, floor=0.7, breaches=2), state, "alpha") == 0.5
+    assert compliance(Commitment(level=3, floor=0.7), state, "alpha") == 1.0
+    assert compliance(Commitment(level=3), state, "alpha") is None
+
+
+def test_fidelity_is_the_predicted_side_of_the_fight_value():
+    def fid(level, floor, fight_value=0.4):
+        return fidelity(Commitment(level=level, floor=floor), fight_value)
+
+    for level in (1, 2):
+        assert fid(level, 0.3) == 1
+        assert fid(level, 0.4) == 1  # at the fight value counts as below
+        assert fid(level, 0.5) == 0
+    assert fid(3, 0.36) == 1
+    assert fid(3, 0.45) == 1  # the band is inclusive
+    assert fid(3, 0.34) == 0
+    assert fid(3, 0.46) == 0
+    for level in (4, 5):
+        assert fid(level, 0.5) == 1
+        assert fid(level, 0.4) == 0  # at the fight value is not above it
+        assert fid(level, 0.3) == 0
+    assert fid(5, None) is None
 
 
 def test_collision_means_no_split_satisfies_both_floors():
@@ -278,7 +298,8 @@ def test_a_committed_model_keeps_its_floor_in_the_conversation_and_is_held_to_it
         assert sample.scores["outcome_scorer"].value["collision"] is None
         # its first offer of 0.5 was rejected once; every other move was kept
         assert scores["a_breaches"] == 1
-        assert 0 < scores["a_fidelity"] < 1
+        assert 0 < scores["a_compliance"] < 1
+        assert scores["a_fidelity"] in (0, 1)
         assert scores["a_default_rate"] == 0.0
         episode = sample.store["episode"]
         assert all(not record["defaulted"] for record in episode["rounds"])

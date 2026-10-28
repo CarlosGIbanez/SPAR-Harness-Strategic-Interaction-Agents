@@ -31,6 +31,7 @@ from spar_harness.commitment import (
     Commitment,
     collision,
     commitment_opening,
+    compliance,
     enforced,
     fidelity,
     floor_default,
@@ -329,7 +330,8 @@ SEAT_MEASURES = [
     "floor",
     "fight_value",
     "aggressiveness",  # floor minus fight value
-    "fidelity",
+    "fidelity",  # 1 if the floor sits where the level predicts
+    "compliance",  # kept moves against breaches
     "breaches",
 ]
 SEAT_KEYS = [f"{seat}_{measure}" for seat in ("a", "b") for measure in SEAT_MEASURES]
@@ -386,7 +388,10 @@ def _floor_measures(
         f"{seat}_floor": floor,
         f"{seat}_fight_value": fight_value,
         f"{seat}_aggressiveness": floor - fight_value if floor is not None else None,
-        f"{seat}_fidelity": fidelity(commitment, episode, player)
+        f"{seat}_fidelity": fidelity(commitment, fight_value)
+        if commitment and fight_value is not None
+        else None,
+        f"{seat}_compliance": compliance(commitment, episode, player)
         if commitment
         else None,
         f"{seat}_breaches": commitment.breaches if commitment else None,

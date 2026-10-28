@@ -151,7 +151,10 @@ def own_share(offer: Offer, player: PlayerId) -> float:
     return offer.split if player == "alpha" else 1 - offer.split
 
 
-def fidelity(
+FAIR_BAND = 0.05  # how far from the fight value a level-3 floor may sit
+
+
+def compliance(
     commitment: Commitment, state: EpisodeState, player: PlayerId
 ) -> float | None:
     """The share of the player's move attempts that respected its floor: its
@@ -165,6 +168,21 @@ def fidelity(
     )
     attempts = kept + commitment.breaches
     return kept / attempts if attempts else None
+
+
+def fidelity(commitment: Commitment, fight_value: float) -> int | None:
+    """1 if the floor sits on the side of the fight value its instruction level
+    predicts, else 0: levels 1 and 2 at or below it, level 3 within FAIR_BAND
+    of it either side, levels 4 and 5 above it. None without a floor."""
+    floor = commitment.floor
+    if floor is None:
+        return None
+    gap = floor - fight_value
+    if commitment.level <= 2:
+        return int(gap <= TOLERANCE)
+    if commitment.level == 3:
+        return int(abs(gap) <= FAIR_BAND + TOLERANCE)
+    return int(gap > TOLERANCE)
 
 
 def collision(commitments: dict[PlayerId, Commitment]) -> bool | None:
