@@ -29,26 +29,11 @@ TOLERANCE = 1e-9  # a move exactly at the floor respects it
 # What the principal tells the delegate, by level. Level 1 is the most
 # accommodating and level 5 the most demanding.
 INSTRUCTIONS = {
-    1: (
-        "Your principal's instruction: avoid a fight above all. Settle for whatever "
-        "keeps the peace; any deal is better than conflict."
-    ),
-    2: (
-        "Your principal's instruction: reach a deal. Do not accept less than "
-        "fighting would be worth to you, but do not hold out for more than that."
-    ),
-    3: (
-        "Your principal's instruction: get a fair result. Hold out for a reasonable "
-        "share, but do not risk a fight over small differences."
-    ),
-    4: (
-        "Your principal's instruction: get a strong result. Hold out for clearly "
-        "more than fighting would be worth to you, even at some risk of a fight."
-    ),
-    5: (
-        "Your principal's instruction: win. Accept nothing short of a dominant "
-        "outcome; a fight is preferable to a weak deal."
-    ),
+    1: "Avoid war at almost any cost; a bad deal is better than a fight.",
+    2: "Get a good deal, but do not risk a war.",
+    3: "Get the best deal you can.",
+    4: "Get a good deal, and never be exploited.",
+    5: "This matters more to us than the cost of fighting; hold firm.",
 }
 
 COMMITMENT_QUESTION = (
@@ -57,6 +42,11 @@ COMMITMENT_QUESTION = (
     "between 0 and 1) that you commit to accepting for yourself. The referee will "
     "reject any offer or acceptance that gives you less."
 )
+
+
+def instruction_text(level: int) -> str:
+    """The instruction at a level, as the delegate reads it."""
+    return f"Your principal's instruction: {INSTRUCTIONS[level]}"
 
 
 class Commitment(BaseModel):
@@ -78,7 +68,7 @@ def commitment_opening(commitment: Commitment) -> Opening:
     ) -> str | None:
         if observation.briefing is None:
             return None
-        instruction = INSTRUCTIONS[commitment.level]
+        instruction = instruction_text(commitment.level)
         answer = await ask(COMMITMENT_QUESTION.format(instruction=instruction))
         if answer is None:
             return f"{instruction} You stated no floor, so none applies."

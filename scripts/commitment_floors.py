@@ -23,7 +23,7 @@ from pathlib import Path
 
 from inspect_ai.model import ChatMessageSystem, ChatMessageUser, get_model
 
-from spar_harness.commitment import COMMITMENT_QUESTION, INSTRUCTIONS
+from spar_harness.commitment import COMMITMENT_QUESTION, instruction_text
 from spar_harness.crisis_bargaining import (
     briefing,
     crisis_bargaining_game,
@@ -134,7 +134,7 @@ async def ask_floor(
         ChatMessageUser(content=presenter.render(position, observation, context)),
     ]
     tools = [presenter.tool(observation, context), ANSWER_PROBE_TOOL]
-    question = COMMITMENT_QUESTION.format(instruction=INSTRUCTIONS[level])
+    question = COMMITMENT_QUESTION.format(instruction=instruction_text(level))
     answer = await ask_probe(model, messages, tools, question)
     floor = None if answer is None else min(max(answer, 0.0), 1.0)
     return expected_reservation_value(position, first), floor

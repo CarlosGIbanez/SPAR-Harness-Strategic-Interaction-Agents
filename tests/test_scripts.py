@@ -52,7 +52,7 @@ def test_the_floors_script_asks_each_position_in_the_episodes_own_words():
     )
     assert floor == 0.6
     assert -1 <= fight_value <= 1
-    assert "get a strong result" in questions[-1]
+    assert "never be exploited" in questions[-1]
     assert "state your floor" in questions[-1].lower()
 
 
