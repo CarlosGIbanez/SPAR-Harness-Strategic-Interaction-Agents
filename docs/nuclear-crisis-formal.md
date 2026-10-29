@@ -12,7 +12,7 @@ This document describes the nuclear crisis exactly as `spar_harness` implements 
 
 ## 2. Information
 
-Each side knows its own $T_i$ and $P_i$, the number of oil fields, and that the opponent's worth at the start of the crisis lies between 30 and 100. Rungs are shown by name and description, never by value. The horizon is undisclosed by default (treatment `horizon`). The framing (`NuclearParams.framing`) is military by default or neutral: a strategy game between two players, with the rules, the round reports and the private questions in plain words (slips for accidents, resource sites for oil fields, a truce for the ceasefire); the option names stay, since they carry the ladder's order. The strike-or-accident probe is logged the same way in both.
+Each side knows its own $T_i$ and $P_i$, the number of oil fields, and that the opponent's worth at the start of the crisis lies between 30 and 100. Rungs are shown by name and description, never by value. The horizon is undisclosed by default (treatment `horizon`). The framing (`NuclearParams.framing`) is military by default or neutral: a strategy game between two players, with the rules, the round reports and the private questions in plain words (slips for accidents, resource sites for oil fields, a truce for the ceasefire). Both framings give the same rule information, and the ladder, names and descriptions, is the same in both, since it carries the order. The strike-or-accident probe is logged the same way in both.
 
 ## 3. Timing
 
@@ -52,7 +52,7 @@ Under the default payoffs, after Jervis, losing ground below half costs its full
 
 ## 7. Accidents (treatment `noise`)
 
-The referee draws each move's accident from its own seeded stream, `noise-{seed}-{stage}-{round}-{player}`, so both episodes of a pair get the same accidents. The game's `misfire` raises the order by $1$ to $3$ rungs, drawn from the same stream, up to $30$; an order of $30$ can't misfire. The opponent sees only the executed rung, and the rules tell both sides that accidents happen and how large they are, whatever the rate. Orders of sides in `scripted` never misfire: they are played by a script whose plan already imitates accidents.
+The referee draws each move's accident from its own seeded stream, `noise-{seed}-{stage}-{round}-{player}`, so both episodes of a pair get the same accidents. The game's `misfire` raises the order by $1$ to $3$ rungs, drawn from the same stream, up to $30$; an order of $30$ can't misfire. The opponent sees only the executed rung, and the rules tell both sides that accidents happen, how large they are and that they can reach Strategic Nuclear War, whatever the rate. Orders of sides in `scripted` never misfire: they are played by a script whose plan already imitates accidents.
 
 ## 8. Talk
 

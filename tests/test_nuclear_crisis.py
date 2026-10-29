@@ -408,6 +408,69 @@ def test_the_neutral_framing_keeps_only_the_option_names_military():
     assert "Truce" in briefing and "Slips happen" in briefing
 
 
+def test_both_framings_give_the_same_rule_information():
+    for framing in ("military", "neutral"):
+        log = []
+        run(
+            config(max_rounds=1, framing=framing),
+            alpha=taking(10, log=log),
+            beta=taking(10),
+        )
+        text = render_observation("alpha", log[0][0], context())
+        assert "count only as much as Nuclear Threat until" in text, framing
+        assert "three options harsher than ordered, even up to Strategic" in text or (
+            "three options stronger than chosen, even up to Strategic" in text
+        ), framing
+
+
+def test_a_neutral_mid_crisis_start_and_fresh_question_use_neutral_words():
+    start = NuclearStart(
+        alpha_share=0.5,
+        oil_fields=2,
+        costs={"alpha": 3.0, "beta": 3.0},
+        nuclear_used=False,
+        history=[{"alpha": 12, "beta": 12}],
+    )
+    fresh = []
+
+    def mock(input, tools, tool_choice, config):
+        prompt = [message for message in input if message.role == "user"][-1].text
+        if prompt.startswith("A territory holds"):
+            fresh.append(prompt)
+        if "submit_move" not in prompt:
+            return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 50})
+        arguments = {
+            "action": "Economic Pressure",
+            "announced": "Economic Pressure",
+            "claimed_worth": 50,
+        }
+        return ModelOutput.for_tool_call("mock", "submit_move", arguments)
+
+    log = []
+    alpha = model_player(
+        get_model("mockllm/model", custom_outputs=mock), [], NUCLEAR_PRESENTER
+    )
+    run(
+        config(max_rounds=1, framing="neutral", start=start),
+        alpha=taking(12, log=log),
+        beta=taking(12),
+    )
+    assert "and 2 resource sites remain" in render_observation(
+        "alpha", log[0][0], context()
+    )
+    one_left = []
+    run(
+        config(max_rounds=1, start=start.model_copy(update={"oil_fields": 1})),
+        alpha=taking(12, log=one_left),
+        beta=taking(12),
+    )
+    text = render_observation("alpha", one_left[0][0], context())
+    assert "and 1 oil field remains." in text
+    run(config(max_rounds=1, framing="neutral"), alpha=alpha, beta=taking(10))
+    assert len(fresh) == 1
+    assert "resource sites" in fresh[0] and "oil" not in fresh[0]
+
+
 def test_the_neutral_strike_question_logs_slips_as_accidents():
     def mock(input, tools, tool_choice, config):
         prompt = [message for message in input if message.role == "user"][-1].text
