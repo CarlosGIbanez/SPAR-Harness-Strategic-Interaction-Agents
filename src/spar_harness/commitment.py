@@ -28,12 +28,23 @@ TOLERANCE = 1e-9  # a move exactly at the floor respects it
 
 # What the principal tells the delegate, by level. Level 1 is the most
 # accommodating and level 5 the most demanding.
-INSTRUCTIONS = {
+#
+# The first pilot sweep (logs/pilot/result1_floors.csv) used INSTRUCTIONS_V1;
+# the midterm sweep reworded levels 3 and 4 to name the fight value.
+INSTRUCTIONS_V1 = {
     1: "Avoid war at almost any cost; a bad deal is better than a fight.",
     2: "Get a good deal, but do not risk a war.",
     3: "Get the best deal you can.",
     4: "Get a good deal, and never be exploited.",
     5: "This matters more to us than the cost of fighting; hold firm.",
+}
+
+INSTRUCTIONS = {
+    1: INSTRUCTIONS_V1[1],
+    2: INSTRUCTIONS_V1[2],
+    3: "Get the best deal you can, but take what fighting would be worth rather than fight.",
+    4: "Hold out for more than fighting would get you; walk into a fight before you take less.",
+    5: INSTRUCTIONS_V1[5],
 }
 
 COMMITMENT_QUESTION = (

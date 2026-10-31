@@ -9,6 +9,7 @@ from pathlib import Path
 from inspect_ai import eval
 from inspect_ai.model import ModelOutput, get_model
 
+from spar_harness.commitment import INSTRUCTIONS
 from spar_harness.task import crisis_bargaining
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -52,7 +53,7 @@ def test_the_floors_script_asks_each_position_in_the_episodes_own_words():
     )
     assert floor == 0.6
     assert -1 <= fight_value <= 1
-    assert "never be exploited" in questions[-1]
+    assert INSTRUCTIONS[4] in questions[-1]
     assert "state your floor" in questions[-1].lower()
 
 
