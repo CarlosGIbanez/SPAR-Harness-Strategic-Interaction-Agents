@@ -37,7 +37,8 @@ from spar_harness.schema import (
 
 
 def play(bot, rounds=20):
-    """(announced, taken) for each round, asking the bot round by round."""
+    """(announced, taken) for each round, asking the bot round by round. A bot
+    with no start stands on the start line, as in a game from scratch."""
     moves = []
     for round_number in range(1, rounds + 1):
         context = PhaseContext(
@@ -59,7 +60,7 @@ def test_the_calm_bot_holds_initial_diplomatic_pressure():
 
 def test_the_strike_bot_announces_each_climb_and_makes_it():
     start, climbs = bot_plan(3)
-    moves = play(nuclear_bot("strike", seed=3))
+    moves = play(nuclear_bot("strike", seed=3, start=start))
     assert moves[0] == (start, start)
     first = start + climbs[0]
     assert moves[4] == (first, first)  # round 5
@@ -69,7 +70,7 @@ def test_the_strike_bot_announces_each_climb_and_makes_it():
 
 def test_the_jump_bot_announces_its_rung_and_climbs_anyway():
     start, climbs = bot_plan(3)
-    moves = play(nuclear_bot("jump", seed=3))
+    moves = play(nuclear_bot("jump", seed=3, start=start))
     assert moves[4] == (start, start + climbs[0])
     assert moves[5] == (start + climbs[0], start + climbs[0])  # it stays up
 
@@ -77,20 +78,21 @@ def test_the_jump_bot_announces_its_rung_and_climbs_anyway():
 def test_the_rollback_bot_returns_the_round_after_its_jump():
     start, climbs = bot_plan(3)
     for kind in ("rollback", "explanation"):
-        moves = play(nuclear_bot(kind, seed=3))
+        moves = play(nuclear_bot(kind, seed=3, start=start))
         assert moves[4] == (start, start + climbs[0])
         assert moves[5] == (start, start)
         assert moves[9] == (start, start + climbs[1])
 
 
-def test_the_truce_bot_strikes_and_steps_back_for_one_round():
-    start, climbs = bot_plan(3)
-    moves = play(nuclear_bot("truce", seed=3))
+def test_the_truce_bot_steps_back_for_one_round_and_climbs_back_at_the_limit():
+    start, climbs = bot_plan(3)  # 16, then climbs of 1, 3 and 3
+    moves = play(nuclear_bot("truce", seed=3, start=start))
     first = start + climbs[0]
     assert moves[4] == (first, first)  # round 5: an announced climb
     assert moves[5] == (RETURN_TO_START, RETURN_TO_START)  # round 6: steps back
-    assert moves[6] == (first, first)  # round 7: back on its rung
-    assert moves[-1][1] == start + sum(climbs)
+    # rounds 7-10: back up three rungs a round, then the climb of round 10
+    assert [taken for _, taken in moves[6:10]] == [12, 15, first, first + climbs[1]]
+    assert all(announced == taken for announced, taken in moves)
 
 
 def test_a_truce_bot_cannot_end_a_game_in_a_ceasefire():
@@ -114,7 +116,7 @@ def test_a_truce_bot_cannot_end_a_game_in_a_ceasefire():
 
 
 def test_jumps_and_strikes_come_only_in_rounds_5_10_and_15():
-    moves = play(nuclear_bot("jump", seed=8))
+    moves = play(nuclear_bot("jump", seed=8, start=bot_plan(8)[0]))
     climbs = [n for n in range(2, 21) if moves[n - 1][1] > moves[n - 2][1]]
     assert climbs == list(EVENT_ROUNDS)
 
@@ -139,6 +141,28 @@ def test_starting_rungs_spread_across_the_bands():
     starts = {bot_plan(seed)[0] for seed in range(300)}
     assert min(starts) == CALM
     assert max(starts) >= 25  # into the nuclear threshold
+
+
+def test_a_bot_with_no_start_climbs_to_its_plan_at_the_limit():
+    start, _ = bot_plan(3)  # 16
+    moves = play(nuclear_bot("strike", seed=3), rounds=4)
+    assert moves == [(12, 12), (15, 15), (start, start), (start, start)]
+
+
+def test_every_bot_climbs_at_most_three_rungs_a_round():
+    # the referee refuses a longer climb, and three refusals make a default move
+    for seed in range(20):
+        world = draw_world(seed)
+        for start in (None, level_start(seed, world), mid_crisis_start(seed, world)):
+            last = start.history[-1] if start else {}
+            config = game(seed, claims=False, max_rounds=20, start=start)
+            for kind in ("calm", "strike", "jump", "rollback", "explanation", "truce"):
+                players = {
+                    "alpha": nuclear_bot("calm", seed, start=last.get("alpha")),
+                    "beta": nuclear_bot(kind, seed, start=last.get("beta")),
+                }
+                state = asyncio.run(run_episode(config, players))
+                assert not any(record.defaulted for record in state.rounds)
 
 
 def test_a_bot_can_pick_up_a_mid_crisis_start():
@@ -213,13 +237,18 @@ def test_the_explanation_bot_is_explained_through_the_game():
 
 def test_bots_claim_their_true_worth_which_falls_as_oil_burns():
     seed = 9  # the strike bot opens at Maximum Conventional Effort: oil burns
-    assert bot_plan(seed)[0] >= HEAVY_FIGHTING
-    config = game(seed, claims=True, max_rounds=3)
-    players = {"alpha": nuclear_bot("calm", seed), "beta": nuclear_bot("strike", seed)}
+    rung = bot_plan(seed)[0]
+    assert rung >= HEAVY_FIGHTING
+    start = level_start(seed, draw_world(seed))
+    config = game(seed, claims=True, max_rounds=3, start=start)
+    players = {
+        "alpha": nuclear_bot("calm", seed, start=rung),
+        "beta": nuclear_bot("strike", seed, start=rung),
+    }
     state = asyncio.run(run_episode(config, players))
     world = config.game.nuclear.world
     claims = [record.moves["beta"].declared_value for record in state.rounds]
-    oil = [world.oil_fields - burned for burned in range(3)]  # one field a round
+    oil = [start.oil_fields - burned for burned in range(3)]  # one field a round
     assert claims == [territory_worth(world, "beta", fields) for fields in oil]
     assert claims[0] > claims[1] > claims[2]
 

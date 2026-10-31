@@ -1,9 +1,9 @@
 """Rules of the nuclear crisis game (F2: escalation as a property of the pair).
 
-Each round both sides take a rung of Payne's (2026) escalation ladder at once.
-Territory shifts toward the harsher side, both pay for the hottest rung, heavy
-fighting burns the territory's oil fields, and an order can misfire one to
-three rungs harsher.
+Each round both sides take a rung of Payne's (2026) escalation ladder at once,
+at most three rungs above the one they stood on. Territory shifts toward the
+harsher side, both pay for the hottest rung, heavy fighting burns the
+territory's oil fields, and an order can misfire one to three rungs harsher.
 """
 
 import random
@@ -84,6 +84,7 @@ NUCLEAR_USE = 25  # Limited Nuclear Use: the tactical threshold
 STRATEGIC_THREATS = (28, 29)  # gated until someone crosses the threshold
 STRATEGIC_WAR = 30
 MAX_MISFIRE = 3  # rungs an accident adds at most
+MAX_CLIMB = 3  # rungs a side may choose above the one it stood on
 
 
 def rung_name(rung: int) -> str:
@@ -92,6 +93,11 @@ def rung_name(rung: int) -> str:
 
 def rung_value(rung: int) -> int:
     return LADDER[rung - 1][2]
+
+
+def highest_choice(stood: int) -> int:
+    """The harshest rung a side may choose from the rung it stood on."""
+    return min(stood + MAX_CLIMB, STRATEGIC_WAR)
 
 
 def is_nuclear_use(rung: int) -> bool:
@@ -196,6 +202,33 @@ def move_problem(game: GameSpec, move: Move) -> str | None:
     if move.declared_action is not None and move.declared_action.kind != "rung":
         return "announce one of the options"
     return None
+
+
+def climb_problem(
+    game: GameSpec, state: EpisodeState, player: PlayerId, move: Move
+) -> str | None:
+    """Why a move climbs further than one round allows, or None if it doesn't.
+
+    The limit counts from the rung the side executed last round, so after an
+    accident it counts from where the accident put it; stepping back is free.
+    Announcements are talk and have no limit.
+    """
+    last_executed = state.nuclear.last_executed
+    stood = last_executed.get(player, RETURN_TO_START)
+    highest = highest_choice(stood)
+    if move.action.rung <= highest:
+        return None
+    if player in last_executed:
+        limit = (
+            f"You took {rung_name(stood)} last round, so you can choose at most "
+            f"three options further down the list"
+        )
+    else:
+        limit = (
+            f"In the first round you can choose at most three options further down "
+            f"the list than {rung_name(stood)}"
+        )
+    return f"{limit}: {rung_name(highest)} or any option before it."
 
 
 def before_stage(

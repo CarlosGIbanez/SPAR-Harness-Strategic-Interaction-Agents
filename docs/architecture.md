@@ -50,7 +50,7 @@ flowchart TB
 | `bots.py` | Scripted players for both games | `equilibrium_bot`, `random_bot`, `rational_contract_bot`, `scripted_contract_bot` |
 | `nuclear_bots.py` | The F2 bots for the nuclear crisis, and the level and mid-crisis starts of their games | `nuclear_bot`, `bot_plan`, `level_start`, `mid_crisis_start` |
 | `model_player.py` | Game-agnostic adapter from an Inspect `Model` to a `Player`: conversation, the fixed tools list, retries, side-call probes | `model_player`, `Presenter`, `ProbeResponse`, `Ask`, `ask_probe`, `ANSWER_PROBE_TOOL`, `ANSWER_WITH_CHOICE_TOOL` |
-| `nuclear_crisis.py` | Nuclear crisis: Payne's ladder, pure rules plus the game's plugins | `LADDER`, `is_nuclear_use`, `effective_value`, `territory_worth`, `share_payoff`, `draw_world`, `nuclear_crisis_game`, `ALLOWED_ACTIONS`, `briefing`, `ending_after_move`, `default_move`, `move_problem`, `before_stage`, `after_round`, `misfire`, `episode_payoffs` |
+| `nuclear_crisis.py` | Nuclear crisis: Payne's ladder, pure rules plus the game's plugins | `LADDER`, `is_nuclear_use`, `effective_value`, `territory_worth`, `share_payoff`, `draw_world`, `nuclear_crisis_game`, `highest_choice`, `ALLOWED_ACTIONS`, `briefing`, `ending_after_move`, `default_move`, `move_problem`, `climb_problem`, `before_stage`, `after_round`, `misfire`, `episode_payoffs` |
 | `crisis_presenter.py`, `contract_presenter.py`, `nuclear_presenter.py` | How each game is shown to a model | `CRISIS_PRESENTER`, `CONTRACT_PRESENTER`, `NUCLEAR_PRESENTER` |
 | `measures.py` | Per-episode measures for each game, computed from an `EpisodeState` | `outcome_measures`, `player_measures`, `contract_outcome_measures`, `contract_player_measures`, `nuclear_outcome_measures`, `nuclear_player_measures`, `opponent_move_kind`, `climb` |
 | `task.py` | The crisis bargaining task and its scorers, plus the shared solver, reducer and metric | `crisis_bargaining`, `referee`, `mean_of_defined`, `mean_of_defined_reducer`, `Controller`, `PRESENTERS` |
@@ -341,7 +341,7 @@ In contract dynamics, the bearer's decision is the last move of the episode. It 
 flowchart TD
     ask["player(observation, context)"] --> raised{"raised<br/>InvalidMove?"}
     raised -- "yes" --> retry
-    raised -- "no" --> val{"_validate(game, move, context)"}
+    raised -- "no" --> val{"_validate(game, state, player, move, context)"}
     val -- "ok" --> ok(["use the move"])
     val -- "InvalidMove(reason)" --> retry{"fewer than 3 attempts so far?<br/>(1 + MAX_RETRIES)"}
     retry -- "yes" --> again["new empty Observation<br/>context.error = reason"] --> ask
@@ -349,11 +349,12 @@ flowchart TD
     def --> mark(["use the default, add the player to record.defaulted"])
 ```
 
-`_validate` checks four things, in order:
+`_validate` checks five things, in order:
 1. **Action.** The action is present and its kind is in `context.allowed_actions`. In a message phase, there must be no action.
 2. **Talk.** Every talk field used is in `context.talk_fields`. In a message phase, `message` is always open.
 3. **Declared type.** It only states fields in `context.declarable_fields`, which are the private ones.
 4. **Game rules.** `MOVE_CHECKS[game_id]` returns no problem. For contract dynamics, that's the transfer cap.
+5. **Rules of the game so far.** `STATE_CHECKS[game_id]` returns no problem, given the state and the player. For the nuclear crisis, that's the climb limit.
 
 Players can fail in two ways, and both go through the same retry path. Either the referee rejects the move, or the player raises `InvalidMove` itself, which is what `model_player` does when a tool call is missing or malformed, or lacks a field the tool requires. After a default move, `model_player` tells the model, in the next round, that its last move was not accepted.
 
@@ -377,6 +378,7 @@ Default moves per game:
 | `DEFAULT_MOVES` | `(GameSpec, EpisodeState, PlayerId, PhaseContext) -> Move` | `default_move` | `default_move` | `default_move`: hold the last rung |
 | `BEFORE_STAGE` (optional) | `(GameSpec, EpisodeState, StageSpec, Random) -> Ending \| None` | (absent) | `before_stage`: before `persuasion`, records the contract and draws shock and bearer | `before_stage`: sets up the territory, or a mid-crisis start |
 | `MOVE_CHECKS` (optional) | `(GameSpec, Move) -> problem \| None` | (absent) | `move_problem`: the transfer cap | `move_problem`: announcements are rungs |
+| `STATE_CHECKS` (optional) | `(GameSpec, EpisodeState, PlayerId, Move) -> problem \| None` | (absent) | (absent) | `climb_problem`: at most three rungs above the last executed one |
 | `ACTOR_RULES` (optional) | `(Role, EpisodeState) -> PlayerId` | (absent) | `actor_for`: bearer and other | (absent) |
 | `AFTER_ROUND` (optional) | `(GameSpec, EpisodeState, RoundRecord) -> RoundEnd` | (absent) | (absent) | `after_round`: territory, costs, burning oil, reports, endings |
 | `NOISE` (optional) | `(GameSpec, EpisodeState, PlayerId, Move, Random) -> Move`, the move as carried out when the noise treatment hits | (absent) | (absent) | `misfire`: one to three rungs harsher |
@@ -461,7 +463,7 @@ Each bot is a **closure**: a factory function returns an `async play(observation
 | `equilibrium_bot()` | crisis | its `Briefing` | Proposer: `_risk_return_share` against the opponent grid, breaking ties toward the most generous. Responder: accepts at or above `expected_reservation_value`, otherwise fights. Truthful declared types |
 | `rational_contract_bot()` | contract | its `ContractBriefing` | Proposer: walks away if `deal_exists` is false; otherwise `_best_credible_contract`, which scans 101 credible transfers and picks the $(q^*(t), t)$ that maximizes the smaller side's value. Responder: accepts iff `contract_value` > 0, assuming the bearer honors iff $\tau \le 0$; otherwise walks away. Bearer: honors iff $\tau \le 0$. Sends empty messages |
 | `scripted_contract_bot(decision, appeal)` | contract | none | Proposes $(\tfrac12, 0)$, accepts anything, sends `appeal` as the other player, and always makes `decision` as bearer. The task exposes it as `always_honor` and `always_renege` |
-| `nuclear_bot(kind, seed, start)` | nuclear | its current rung | The F2 bots: `calm` holds Initial Diplomatic Pressure; `strike`, `jump`, `rollback` and `explanation` start from the seed's rung and climb one to three rungs in rounds 5, 10 and 15, announced (strike) or not (the others). `jump` stays up, `rollback` and `explanation` return the next round. `start` picks up a mid-crisis start |
+| `nuclear_bot(kind, seed, start)` | nuclear | its current rung | The F2 bots: `calm` holds Initial Diplomatic Pressure; `strike`, `jump`, `rollback` and `explanation` start from the seed's rung and climb one to three rungs in rounds 5, 10 and 15, announced (strike) or not (the others). `jump` stays up, `rollback` and `explanation` return the next round; `truce` strikes, steps back to Return to Start Line the round after and climbs back three rungs a round. No bot climbs more than three rungs a round. `start` picks up a mid-crisis start |
 
 ### 6.2 The model player (`model_player.py`) and presenters
 
@@ -589,7 +591,7 @@ The probe-based measures are computed in the task modules:
 
 **A new treatment.** Follow these steps:
 1. Add a parameter model to `schema.py` and an optional field on `Treatments` (`None` means off). A game-specific number can go into that game's params instead, the way contract dynamics does.
-2. Apply it in the referee or the game's plugins. Information treatments go in the game's `briefing`, and permissions go in `PhaseContext`, `_validate` or `MOVE_CHECKS`.
+2. Apply it in the referee or the game's plugins. Information treatments go in the game's `briefing`, and permissions go in `PhaseContext`, `_validate`, `MOVE_CHECKS` or `STATE_CHECKS`.
 3. Render it in the game's presenter.
 4. Expose it as a task parameter.
 

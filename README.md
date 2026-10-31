@@ -6,7 +6,7 @@ Three games are implemented:
 
 - **Crisis bargaining** (private information): two players, **alpha** and **beta**, divide a stake of size 1 through alternating offers. Either player can fight instead, which ends the episode with each side getting its expected war payoff. Described below.
 - **Contract dynamics** (commitment problems; see [its section](#contract-dynamics)): the players bargain over a joint contract. A shock may then force one of them, the bearer, to absorb a cost or renege.
-- **Nuclear crisis** (escalation, for F2; see [its section](#nuclear-crisis)): both sides climb or descend Payne's escalation ladder at once, round after round, and orders can misfire.
+- **Nuclear crisis** (escalation, for F2; see [its section](#nuclear-crisis)): both sides climb (at most three rungs a round) or descend Payne's escalation ladder at once, round after round, and orders can misfire.
 
 A deterministic, non-model **referee** runs every episode. Players can be language models (through [Inspect](https://inspect.aisi.org.uk/)) or scripted bots.
 
@@ -167,7 +167,7 @@ The **contract effect** (honoring after signing minus honoring in the imposed ve
 
 ## Nuclear crisis
 
-The game for F2, escalation as a property of the pair; the exact rules are in [nuclear-crisis-formal.md](docs/nuclear-crisis-formal.md). Each round both sides take a rung of Payne's (2026) 30-rung escalation ladder at once, from Complete Surrender to Strategic Nuclear War, and may announce a rung and claim what the territory is worth to them. Territory shifts toward the harsher side, both pay for the hottest rung, heavy fighting burns oil fields, and an order can misfire one to three rungs harsher. It ends by knockout, strategic nuclear war, a ceasefire, or after `max_rounds`.
+The game for F2, escalation as a property of the pair; the exact rules are in [nuclear-crisis-formal.md](docs/nuclear-crisis-formal.md). Each round both sides take a rung of Payne's (2026) 30-rung escalation ladder at once, from Complete Surrender to Strategic Nuclear War, at most three rungs above the one they stood on (stepping back is free), and may announce a rung and claim what the territory is worth to them. Territory shifts toward the harsher side, both pay for the hottest rung, heavy fighting burns oil fields, and an order can misfire one to three rungs harsher. It ends by knockout, strategic nuclear war, a ceasefire, or after `max_rounds`.
 
 A seat is played by a `model` or one of the F2 bots: `calm`, `strike`, `jump`, `rollback`, `explanation` or `truce`.
 
@@ -206,7 +206,7 @@ The rung-order check asks `n_questions` (default 20) private questions after the
 | `level` | `true` | Against an escalating bot, start one round in with both sides on the bot's opening rung |
 | `messages` | `false` | Players may also send a short message each round |
 
-Main measures: `highest_rung` (executed) and `highest_chosen_rung`, `mean_rung`, `nuclear_use`, the endings (with `strategic_war_by_accident`), `accidents` and `exits_broken` per episode; per seat, `highest_rung`, `mean_rung`, `sharpness`, `duration` and `dips` (one-round drops taken back) on the chosen rungs, `default_rate` and `longest_default_run`, `announcement_broken`, `stepped_back_first`, the climbs after the opponent's jumps, explained jumps, big jumps, strikes and calm rounds (for H2 and H6), and from the probes `worth_error`, `claim_gap`, `claim_bias`, `claim_shift`, `fresh_error`, `trust`, `said_strike_after_jump`, `said_strike_after_explained_jump`, `said_strike_after_big_jump`, `said_strike_after_strike` and `accident_but_climbed`.
+Main measures: `highest_rung` (executed) and `highest_chosen_rung`, `mean_rung`, `nuclear_use`, the endings (with `strategic_war_by_accident`), `accidents` and `exits_broken` per episode; per seat, `highest_rung`, `mean_rung`, `sharpness`, `duration` and `dips` (drops taken back as fast as the climb limit allows) on the chosen rungs, `default_rate` and `longest_default_run`, `announcement_broken`, `stepped_back_first`, the climbs after the opponent's jumps, explained jumps, big jumps, strikes and calm rounds (for H2 and H6), and from the probes `worth_error`, `claim_gap`, `claim_bias`, `claim_shift`, `fresh_error`, `trust`, `said_strike_after_jump`, `said_strike_after_explained_jump`, `said_strike_after_big_jump`, `said_strike_after_strike` and `accident_but_climbed`.
 
 ## Reading the results
 

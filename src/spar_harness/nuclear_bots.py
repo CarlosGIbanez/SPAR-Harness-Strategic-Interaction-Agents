@@ -5,8 +5,10 @@ starting rung and its three climbs, so all bots with the same seed start on the
 same rung and climb by the same steps. Bots never step to Return to Start Line
 or milder (which would let a calm model and a calm bot end the game in a
 ceasefire), except the truce bot for one round at a time, and never take
-Strategic Nuclear War. They announce their rung
-(honestly or not, by kind) and always claim their true worth of the territory.
+Strategic Nuclear War. Like any side, a bot climbs at most three rungs a round:
+where its plan is further up, it climbs three, announcing it. They announce
+their rung (honestly or not, by kind) and always claim their true worth of the
+territory.
 
 A game against an escalating bot starts level: one round of history with both
 sides on the bot's opening rung (`level_start`), so the model never loses the
@@ -24,6 +26,7 @@ from spar_harness.nuclear_crisis import (
     STRATEGIC_WAR,
     after_round,
     before_stage,
+    highest_choice,
     nuclear_crisis_game,
 )
 from spar_harness.referee import Player
@@ -70,33 +73,45 @@ def nuclear_bot(kind: BotKind, seed: int, start: int | None = None) -> Player:
     - explanation: like rollback; the game says "it was an accident" for it
       when its side is in `NuclearParams.explains_jumps`;
     - truce: like strike, and the round after each climb steps back to Return
-      to Start Line for one round, announcing it, then returns to its rung. It
-      gives the twins the situation "the opponent just stepped far back", which
-      model pairs produce and the other bots never do.
+      to Start Line for one round, announcing it, then climbs back to its rung
+      at the limit, three rungs a round. It gives the twins the situation "the
+      opponent just stepped far back", which model pairs produce and the other
+      bots never do.
     """
     planned_start, climbs = bot_plan(seed)
     current = start if start is not None else planned_start
     calm = start if start is not None else CALM
     events = dict(zip(EVENT_ROUNDS, climbs))
+    # where the bot stands; its orders never misfire, so it took what it chose
+    stood = start if start is not None else RETURN_TO_START
 
-    async def play(observation: Observation, context: PhaseContext) -> Move:
+    def plan(number: int) -> tuple[int, int]:
+        """The rungs the bot announces and takes in a round, before the limit."""
         nonlocal current
-        worth = _true_worth(observation, context)
         if kind == "calm":
-            return _move(calm, calm, worth)
-        if kind == "truce" and context.round in TRUCE_ROUNDS:
-            return _move(RETURN_TO_START, RETURN_TO_START, worth)
-        climb = events.get(context.round)
+            return calm, calm
+        if kind == "truce" and number in TRUCE_ROUNDS:
+            return RETURN_TO_START, RETURN_TO_START
+        climb = events.get(number)
         if climb is None:
-            return _move(current, current, worth)
+            return current, current
         higher = current + climb
         if kind in ("strike", "truce"):
             current = higher
-            return _move(higher, higher, worth)
+            return higher, higher
         if kind == "jump":
             announced, current = current, higher
-            return _move(announced, higher, worth)
-        return _move(current, higher, worth)  # rollback, explanation: current stays
+            return announced, higher
+        return current, higher  # rollback, explanation: current stays
+
+    async def play(observation: Observation, context: PhaseContext) -> Move:
+        nonlocal stood
+        announced, taken = plan(context.round)
+        highest = highest_choice(stood)
+        if taken > highest:
+            announced = taken = highest
+        stood = taken
+        return _move(announced, taken, _true_worth(observation, context))
 
     return play
 

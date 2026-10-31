@@ -1,6 +1,7 @@
 """Per-episode measures. Scorers aggregate them across episodes."""
 
 import itertools
+import math
 from collections.abc import Iterable
 
 from pydantic import BaseModel
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 from spar_harness.contract_dynamics import deal_exists, equal_gains_share, temptation
 from spar_harness.crisis_bargaining import bargaining_range, win_probability
 from spar_harness.nuclear_crisis import (
+    MAX_CLIMB,
     MAX_MISFIRE,
     RETURN_TO_START,
     STRATEGIC_WAR,
@@ -291,7 +293,7 @@ class NuclearPlayerMeasures(BaseModel):
     mean_rung: float | None
     sharpness: int | None  # the largest climb in one round
     duration: int | None  # the most climbs with no step back between them
-    dips: int  # one-round drops of 3+ rungs taken back the next round
+    dips: int  # drops of 3+ rungs taken back as fast as the climb limit allows
     default_rate: float
     longest_default_run: int  # the most default moves in a row, for invalid games
     announcement_broken: float | None  # share of announced moves taking another rung
@@ -404,14 +406,17 @@ def opponent_move_kind(report: Report | None) -> str | None:
 
 def _dips(chosen: list[int | None]) -> int:
     """Rounds where the side dropped 3+ rungs from its previous choice and was
-    back at or above it the next round: a one-round de-escalation gesture. A
-    return from a dip counts as a climb in sharpness and duration, so dips are
-    reported apart."""
-    return sum(
-        1
-        for before, now, after in zip(chosen, chosen[1:], chosen[2:])
-        if None not in (before, now, after) and now <= before - 3 and after >= before
-    )
+    back at or above it as soon as the climb limit allowed (the next round, after
+    a drop of three): a de-escalation gesture taken back. A return from a dip
+    counts as climbs in sharpness and duration, so dips are reported apart."""
+    dips = 0
+    for number, (before, now) in enumerate(itertools.pairwise(chosen), start=1):
+        if before is None or now is None or now > before - 3:
+            continue
+        rounds_back = math.ceil((before - now) / MAX_CLIMB)  # climbs to return
+        back = chosen[number + 1 : number + 1 + rounds_back]
+        dips += any(rung is not None and rung >= before for rung in back)
+    return dips
 
 
 def _longest_escalation(climbs: list[int]) -> int:

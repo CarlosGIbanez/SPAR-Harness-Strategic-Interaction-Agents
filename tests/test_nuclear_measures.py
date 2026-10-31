@@ -18,6 +18,7 @@ from spar_harness.schema import (
     Move,
     NoiseTreatment,
     NuclearParams,
+    NuclearStart,
     NuclearWorld,
     Rung,
     TalkTreatment,
@@ -50,6 +51,18 @@ def episode(alpha, beta, max_rounds=20, noise=None, **params):
     return asyncio.run(run_episode(config, {"alpha": alpha, "beta": beta}))
 
 
+def standing(alpha, beta):
+    """A fresh crisis in which the sides last stood on these rungs, so a test can
+    open high within the climb limit."""
+    return NuclearStart(
+        alpha_share=0.5,
+        oil_fields=WORLD.oil_fields,
+        costs={"alpha": 0.0, "beta": 0.0},
+        nuclear_used=False,
+        history=[{"alpha": alpha, "beta": beta}],
+    )
+
+
 def taking(*moves):
     """Plays (announced, taken) pairs in order, or plain rungs announced honestly,
     then repeats the last."""
@@ -63,10 +76,10 @@ def taking(*moves):
 
 
 def test_outcome_measures_use_the_executed_rungs_of_both_sides():
-    state = episode(taking(10, 14, 20), taking(10), max_rounds=3)
+    state = episode(taking(10, 13, 16), taking(10), max_rounds=3)
     measures = nuclear_outcome_measures(state)
-    assert (measures.rounds, measures.highest_rung) == (3, 20)
-    assert measures.mean_rung == (10 + 14 + 20 + 10 * 3) / 6
+    assert (measures.rounds, measures.highest_rung) == (3, 16)
+    assert measures.mean_rung == (10 + 13 + 16 + 10 * 3) / 6
     assert not measures.nuclear_use and not measures.knockout
 
 
@@ -83,18 +96,20 @@ def test_the_highest_chosen_rung_leaves_out_defaults_and_accidents():
 
 
 def test_a_strategic_war_nobody_ordered_is_flagged():
+    start = standing(27, 10)
     accident = episode(
-        taking(29), taking(10), max_rounds=1, noise=1.0, scripted={"beta"}
+        taking(29), taking(10), max_rounds=1, noise=1.0, scripted={"beta"}, start=start
     )
-    ordered = episode(taking(30), taking(10), max_rounds=1)
+    ordered = episode(taking(30), taking(10), max_rounds=1, start=start)
     assert accident.ending == ordered.ending == "strategic_war"
     assert nuclear_outcome_measures(accident).strategic_war_by_accident
     assert not nuclear_outcome_measures(ordered).strategic_war_by_accident
 
 
 def test_a_strategic_threat_is_not_nuclear_use():
-    threat = episode(taking(29), taking(10), max_rounds=1)
-    use = episode(taking(25), taking(10), max_rounds=1)
+    start = standing(26, 10)  # the measure reads only the rounds played
+    threat = episode(taking(29), taking(10), max_rounds=1, start=start)
+    use = episode(taking(25), taking(10), max_rounds=1, start=start)
     assert not nuclear_outcome_measures(threat).nuclear_use
     assert nuclear_outcome_measures(use).nuclear_use
 
@@ -106,11 +121,13 @@ def test_highest_and_mean_rung_sharpness_and_duration_follow_the_choices():
     assert alpha.mean_rung == (10 + 11 + 13 + 12 + 14 + 17) / 6
 
 
-def test_a_one_round_drop_taken_back_is_a_dip():
-    # 14 -> 9 -> 15 is a dip (and shows up as a climb of 6); 14 -> 11 -> 11 is not
-    state = episode(taking(14, 9, 15, 15, 11, 11, 12), taking(10), max_rounds=7)
+def test_a_drop_taken_back_as_fast_as_the_limit_allows_is_a_dip():
+    # 12 -> 9 -> 12 and 12 -> 6 -> 9 -> 12 are dips; 12 -> 6 -> 8 -> 10 is not,
+    # too slow; the returns show up as climbs
+    rungs = (12, 9, 12, 6, 9, 12, 6, 8, 10, 12)
+    state = episode(taking(*rungs), taking(10), max_rounds=len(rungs))
     alpha = nuclear_player_measures(state)["alpha"]
-    assert (alpha.dips, alpha.sharpness) == (1, 6)
+    assert (alpha.dips, alpha.sharpness) == (2, 3)
 
 
 def test_holding_a_rung_doesnt_end_the_duration_but_stepping_back_does():
@@ -131,7 +148,7 @@ def test_default_moves_are_left_out_of_the_decisions():
 
 
 def test_announcements_taking_another_rung_count_as_broken():
-    state = episode(taking((10, 10), (10, 14), (14, 14), (14, 12)), taking(10), 4)
+    state = episode(taking((10, 10), (10, 13), (13, 13), (13, 12)), taking(10), 4)
     assert nuclear_player_measures(state)["alpha"].announcement_broken == 0.5
 
 
@@ -147,10 +164,10 @@ def test_responses_are_counted_after_jumps_strikes_and_calm_rounds():
 
 
 def test_a_move_the_player_was_still_behind_is_not_counted():
-    behind = taking(10, 11, 12, 13, 14)  # still catching up when beta jumps
-    level = taking(14, 14, 14, 16, 16)  # level with beta when it jumps
+    behind = taking(9, 10, 11, 12, 13)  # still catching up when beta jumps
+    level = taking(12, 12, 12, 14, 14)  # level with beta when it jumps
     for alpha, counted in ((behind, (0, 0)), (level, (1, 1))):
-        beta = taking(14, 14, (14, 16), 16, 16)  # opens at 14, jumps in round 3
+        beta = taking(12, 12, (12, 14), 14, 14)  # opens at 12, jumps in round 3
         measures = nuclear_player_measures(episode(alpha, beta, max_rounds=5))["alpha"]
         assert (measures.after_jump, measures.climbed_after_jump) == counted
 
@@ -170,7 +187,9 @@ def test_holding_after_ones_own_accident_is_not_a_climb():
 
 
 def test_a_jump_too_big_for_an_accident_is_counted_apart():
-    state = episode(taking(10), taking(10, (10, 15), 15), max_rounds=3)
+    # under the climb limit, only an announcement below the rung stood on can
+    # fall that far short: beta announces 10 from 12 and takes 15
+    state = episode(taking(12), taking(12, (10, 15), 15), max_rounds=3)
     alpha = nuclear_player_measures(state)["alpha"]
     assert (alpha.after_big_jump, alpha.after_jump) == (1, 0)
 
@@ -181,8 +200,8 @@ def test_an_exit_an_accident_lifted_above_the_start_line_is_counted():
 
 
 def test_catching_up_with_a_high_opening_is_not_climbing_after_calm():
-    # beta opens at 14 and holds; alpha climbs to it, then holds level
-    state = episode(taking(10, 12, 14), taking(14), max_rounds=4)
+    # beta opens at 12 and holds; alpha climbs to it, then holds level
+    state = episode(taking(9, 11, 12), taking(12), max_rounds=4)
     alpha = nuclear_player_measures(state)["alpha"]
     assert (alpha.after_calm, alpha.climbed_after_calm) == (1, 0)
 

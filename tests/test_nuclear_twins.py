@@ -139,3 +139,20 @@ def test_twins_play_legal_honest_moves_against_a_bot_and_each_other():
             assert 1 <= move.action.rung <= 29
             assert move.declared_action == move.action  # honest announcements
             assert move.declared_value is not None
+
+
+def test_twins_climb_at_most_three_rungs_a_round():
+    # a twin that always wants six rungs up, and opens far above the start line
+    rows = [(Situation(own, own, 0, False, False), 6) for own in range(10, 20)] * 5
+    eager = fit(rows, "T0", first_moves=[20])
+    state = asyncio.run(
+        run_episode(
+            config(seed=2, max_rounds=8),
+            {"alpha": twin(eager, random.Random(0)), "beta": nuclear_bot("calm", 2)},
+        )
+    )
+    reports = [record.reports["alpha"] for record in state.rounds]
+    assert reports[0]["ordered"] == 12  # three above the start line
+    climbs = [report["ordered"] - report["previous"] for report in reports[1:]]
+    assert max(climbs) == 3
+    assert not any(record.defaulted for record in state.rounds)

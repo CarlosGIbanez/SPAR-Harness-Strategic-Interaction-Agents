@@ -8,10 +8,11 @@ one feature at a time: T1 its own last move, T2 how many times the opponent
 exceeded its announcement, T3 how far below the game's highest rung it stands.
 A multinomial logistic regression on the model's step-1 decisions gives the
 probability of each move class (-2 or less, -1, 0, +1, +2, +3 or more); in the
-end classes the exact size is drawn from the model's own moves. A twin announces
-honestly and claims its true worth, so its announced and executed rungs differ
-only through accidents. It doesn't know about its own accidents: in step 1 the
-model had none.
+end classes the exact size is drawn from the model's own moves. Like any side, a
+twin climbs at most three rungs a round, so a larger move drawn, or a copy of an
+opponent further up, climbs three. A twin announces honestly and claims its true
+worth, so its announced and executed rungs differ only through accidents. It
+doesn't know about its own accidents: in step 1 the model had none.
 """
 
 import random
@@ -20,7 +21,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from spar_harness.nuclear_crisis import RETURN_TO_START, STRATEGIC_WAR
+from spar_harness.nuclear_crisis import RETURN_TO_START, STRATEGIC_WAR, highest_choice
 from spar_harness.referee import Player
 from spar_harness.schema import (
     EpisodeConfig,
@@ -239,6 +240,7 @@ def twin(policy: Policy, rng: random.Random) -> Player:
                 if policy.first_moves
                 else RETURN_TO_START + 1
             )
+            rung = min(rung, highest_choice(RETURN_TO_START))
         else:
             situation = situation_after(reports, history, me=observation.recipient)
             probabilities = policy.probabilities(situation)
@@ -250,6 +252,7 @@ def twin(policy: Policy, rng: random.Random) -> Player:
             else:
                 delta = CLASSES[index]
             rung = min(max(situation.own + delta, 1), HIGHEST)
+            rung = min(rung, highest_choice(situation.own))  # the climb limit
         return Move(
             action=Rung(rung=rung),
             declared_action=Rung(rung=rung),

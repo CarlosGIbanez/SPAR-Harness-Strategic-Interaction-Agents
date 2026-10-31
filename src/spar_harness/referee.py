@@ -82,6 +82,10 @@ MOVE_CHECKS = {
     "contract_dynamics": contract_dynamics.move_problem,
     "nuclear_crisis": nuclear_crisis.move_problem,
 }
+# rules that also depend on the game so far, such as how far a side may climb
+STATE_CHECKS: dict[
+    str, Callable[[GameSpec, EpisodeState, PlayerId, Move], str | None]
+] = {"nuclear_crisis": nuclear_crisis.climb_problem}
 # players for roles other than proposer and responder
 ACTOR_RULES = {"contract_dynamics": contract_dynamics.actor_for}
 # what happens once every phase of a round is played: private reports to
@@ -236,7 +240,7 @@ async def _phase_move(
     )
     inbox[player] = []
     reports[player] = []
-    move = await _request_move(game, players[player], observation, context)
+    move = await _request_move(game, state, players[player], observation, context)
     if move is None:
         move = DEFAULT_MOVES[game.game_id](game, state, player, context)
         record.defaulted.add(player)
@@ -267,7 +271,11 @@ def _executed(
 
 
 async def _request_move(
-    game: GameSpec, player: Player, observation: Observation, context: PhaseContext
+    game: GameSpec,
+    state: EpisodeState,
+    player: Player,
+    observation: Observation,
+    context: PhaseContext,
 ) -> Move | None:
     """Ask for a move, retrying with the reason whenever it is invalid.
 
@@ -276,7 +284,7 @@ async def _request_move(
     for _ in range(1 + MAX_RETRIES):
         try:
             move = await player(observation, context)
-            _validate(game, move, context)
+            _validate(game, state, observation.recipient, move, context)
             return move
         except InvalidMove as invalid:
             # A retry carries no new information, only the reason.
@@ -287,7 +295,13 @@ async def _request_move(
     return None
 
 
-def _validate(game: GameSpec, move: Move, context: PhaseContext) -> None:
+def _validate(
+    game: GameSpec,
+    state: EpisodeState,
+    player: PlayerId,
+    move: Move,
+    context: PhaseContext,
+) -> None:
     allowed = context.allowed_actions
     if move.action is None:
         if allowed:
@@ -315,6 +329,9 @@ def _validate(game: GameSpec, move: Move, context: PhaseContext) -> None:
             )
     move_check = MOVE_CHECKS.get(game.game_id)
     problem = move_check(game, move) if move_check else None
+    state_check = STATE_CHECKS.get(game.game_id)
+    if problem is None and state_check is not None:
+        problem = state_check(game, state, player, move)
     if problem is not None:
         raise InvalidMove(problem)
 
