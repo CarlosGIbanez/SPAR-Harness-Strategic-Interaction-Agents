@@ -1,0 +1,3 @@
+40 rows written to logs/pilot/result1b_chunks/L4_strict.csv
+level    n missing  median    mean  above fidelity
+    4   40       0   0.029   0.031   0.88     0.88

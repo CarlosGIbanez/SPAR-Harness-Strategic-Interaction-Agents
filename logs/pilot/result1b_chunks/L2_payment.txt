@@ -1,0 +1,3 @@
+40 rows written to logs/pilot/result1b_chunks/L2_payment.csv
+level    n missing  median    mean  above fidelity
+    2   40       0  -0.022  -0.005   0.40     0.60

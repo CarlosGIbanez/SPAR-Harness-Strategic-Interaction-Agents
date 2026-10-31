@@ -1,0 +1,3 @@
+40 rows written to logs/pilot/result1b_chunks/L3_lottery.csv
+level    n missing  median    mean  above fidelity
+    3   40       0  -0.005  -0.009   0.33     0.97

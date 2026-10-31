@@ -11,3 +11,9 @@ Note: the first result2_lottery_nothing attempt hung at 32/40 samples for 13 min
 
 
 Stopped after result2_lottery_nothing on request; result2_payment_nothing (two stalled attempts) was discarded. Elapsed wall clock including stalls: ~2 h 10 min.
+
+## Midterm runs (2026-10-31, branch hammonr1/F3-indivisible-good)
+
+| run | command | log | wall time |
+|---|---|---|---|
+| result1b_floors (new level 3/4 wording) | first attempt: full 600-call sweep, `--concurrency 4`, stalled at 354/600 (level 3 payment) after ~5 min, killed at 25 min; no CSV (script writes at the end). Rerun as 15 chunks: `uv run python scripts/commitment_floors.py --model openai-api/litellm/claude-sonnet-5-5 --levels L --versions V --seeds 20 --no-deal nothing --private-fields capability cost_of_conflict --concurrency 4 --out logs/pilot/result1b_chunks/L{L}_{V}.csv` under a 240 s alarm, merged into `result1b_floors.csv` | `logs/pilot/result1b_floors.csv` (chunks + calls: `result1b_chunks/`; dead first attempt's calls: `result1b_calls.log`) | 695 s (0 stall retries in chunked run; +25 min lost to the first attempt) |
