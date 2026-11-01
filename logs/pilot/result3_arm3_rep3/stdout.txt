@@ -1,0 +1,11 @@
+Unable to recompute metrics for recovered log: mean_of_defined was not found in the registry
+Monitor from another shell: inspect ctl task list   (inspect ctl --help)
+Running 1 tasks...
+---------------------------------------------------------                       
+crisis_bargaining (40 samples): none/none                                       
+max_retries: 6, timeout: 120, max_connections: 4, epochs_reducer:               
+mean_of_defined, n_episodes: 20, a: model, b: model, no_deal: nothing, version: 
+lottery, commitment_a: 2, commitment_b: 2, private_fields:                      
+capability,cost_of_conflict, dataset: (samples)                                 
+---------------------------------------------------------                       
+                                                                                

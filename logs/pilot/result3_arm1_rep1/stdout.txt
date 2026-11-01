@@ -1,0 +1,68 @@
+Monitor from another shell: inspect ctl task list   (inspect ctl --help)
+Running 1 tasks...
+---------------------------------------------------------                       
+crisis_bargaining (40 samples): none/none                                       
+max_retries: 6, timeout: 120, max_connections: 4, epochs_reducer:               
+mean_of_defined, n_episodes: 20, a: model, b: model, no_deal: nothing, version: 
+lottery, private_fields: capability,cost_of_conflict, dataset: (samples)        
+---------------------------------------------------------                       
+                                                                                
+referee      | Steps:   1/40   2% | Samples:   0/ 40 | mean_of_defined/mean_of_defined:  n/a | openai-api:  3/ 4 | HTTP retries: 0
+referee      | Steps:   3/40   7% | Samples:   3/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:   4/40  10% | Samples:   3/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  3/ 4 | HTTP retries: 0
+referee      | Steps:   7/40  17% | Samples:   7/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:   8/40  20% | Samples:   7/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  3/ 4 | HTTP retries: 0
+referee      | Steps:  10/40  25% | Samples:  10/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  11/40  27% | Samples:  11/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  12/40  30% | Samples:  12/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  13/40  32% | Samples:  13/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  15/40  37% | Samples:  15/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  16/40  40% | Samples:  15/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  3/ 4 | HTTP retries: 0
+referee      | Steps:  18/40  45% | Samples:  18/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  19/40  47% | Samples:  19/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  20/40  50% | Samples:  20/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  21/40  52% | Samples:  21/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  22/40  55% | Samples:  22/ 40 | mean_of_defined/mean_of_defined: 0.00 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  23/40  57% | Samples:  23/ 40 | mean_of_defined/mean_of_defined: 0.04 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  24/40  60% | Samples:  24/ 40 | mean_of_defined/mean_of_defined: 0.04 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  27/40  67% | Samples:  27/ 40 | mean_of_defined/mean_of_defined: 0.08 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  28/40  70% | Samples:  27/ 40 | mean_of_defined/mean_of_defined: 0.08 | openai-api:  3/ 4 | HTTP retries: 0
+referee      | Steps:  31/40  77% | Samples:  31/ 40 | mean_of_defined/mean_of_defined: 0.10 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  32/40  80% | Samples:  32/ 40 | mean_of_defined/mean_of_defined: 0.12 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  33/40  82% | Samples:  33/ 40 | mean_of_defined/mean_of_defined: 0.12 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  34/40  85% | Samples:  34/ 40 | mean_of_defined/mean_of_defined: 0.12 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  35/40  87% | Samples:  35/ 40 | mean_of_defined/mean_of_defined: 0.14 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  36/40  90% | Samples:  36/ 40 | mean_of_defined/mean_of_defined: 0.14 | openai-api:  4/ 4 | HTTP retries: 0
+referee      | Steps:  38/40  95% | Samples:  38/ 40 | mean_of_defined/mean_of_defined: 0.13 | openai-api:  2/ 4 | HTTP retries: 0
+referee      | Steps:  39/40  97% | Samples:  39/ 40 | mean_of_defined/mean_of_defined: 0.13 | openai-api:  1/ 4 | HTTP retries: 0
+referee      | Steps:  40/40 100% | Samples:  39/ 40 | mean_of_defined/mean_of_defined: 0.13 | openai-api:  0/ 4 | HTTP retries: 0
+
+---------------------------------------------------------                       
+crisis_bargaining (40 samples): none/none                                       
+max_retries: 6, timeout: 120, max_connections: 4, epochs_reducer:               
+mean_of_defined, n_episodes: 20, a: model, b: model, no_deal: nothing, version: 
+lottery, private_fields: capability,cost_of_conflict, dataset: (samples)        
+                                                                                
+total time:                           0:02:50                                   
+openai-api/litellm/claude-sonnet-5-5  281,558 tokens [I: 213,625, CW: 0, CR: 0, 
+                                    O: 67,933, R: 0]                            
+a (role)    145,222 tokens [I: 111,004, CW: 0, CR: 0, O: 34,218, R: 0]          
+b (role)    136,336 tokens [I: 102,621, CW: 0, CR: 0, O: 33,715, R: 0]          
+fight               agreement           rounds_to_…         efficiency          
+mean_of_de…  0.125  mean_of_de…  0.875  mean_of_de…  1.143  mean_of_defi…  0.967
+in_range            collision           a_comprehe…         a_default_ra…       
+mean_of_de…  0.800  mean_of_defi…  nan  mean_of_de…  1.000  mean_of_defi…  0.000
+a_intention_…       a_type_gap_c…       a_type_gap_c…       a_floor             
+mean_of_defi…  nan  mean_of_defi…  nan  mean_of_defi…  nan  mean_of_defined  nan
+a_fight_value       a_aggressive…       a_fidelity          a_compliance        
+mean_of_defi…  nan  mean_of_defi…  nan  mean_of_defi…  nan  mean_of_defined  nan
+a_breaches          b_comprehe…         b_default_…         b_intention_gap     
+mean_of_defi…  nan  mean_of_de…  1.000  mean_of_de…  0.000  mean_of_defined  nan
+b_type_gap_c…       b_type_gap_c…       b_floor             b_fight_value       
+mean_of_defi…  nan  mean_of_defi…  nan  mean_of_defi…  nan  mean_of_defined  nan
+b_aggressive…       b_fidelity          b_compliance        b_breaches          
+mean_of_defi…  nan  mean_of_defi…  nan  mean_of_defi…  nan  mean_of_defined  nan
+Log:                                                                            
+logs/pilot/result3_arm1_rep1/2026-10-31T23-13-20-00-00_crisis-bargaining_Wv4zGq…
+---------------------------------------------------------                       
+                                                                                
