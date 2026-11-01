@@ -44,16 +44,17 @@ run_eval() {  # name, extra -T args...
   rm -f "$dir"/*.eval
   watched "$dir" uv run inspect eval src/spar_harness/task.py@crisis_bargaining "${COMMON[@]}" "$@" --log-dir "$dir" || true
   while ! uv run python -c "
-import glob,sys; from inspect_ai.log import read_eval_log
-l=read_eval_log(glob.glob('$dir/*.eval')[0]); sys.exit(0 if l.status=='success' else 1)" 2>/dev/null; do
+import glob,os,sys; from inspect_ai.log import read_eval_log
+fs=sorted(glob.glob('$dir/*.eval'), key=os.path.getmtime)
+l=read_eval_log(fs[-1]); sys.exit(0 if l.status=='success' else 1)" 2>/dev/null; do
     attempts=$((attempts + 1)); [ $attempts -gt 6 ] && { echo "giving up on $name"; break; }
     echo "   retry $attempts"
-    watched "$dir" uv run inspect eval-retry "$dir"/*.eval --display plain --max-connections 4 --timeout 120 || true
+    watched "$dir" uv run inspect eval-retry "$(ls -t "$dir"/*.eval | head -1)" --log-dir "$dir" --display plain --max-connections 4 --timeout 120 || true
   done
   tail -3 "$dir/stdout.txt"
   local secs=$((SECONDS - t0))
   touch "$dir/done"
-  printf '| %s | `%s` | `%s` | %ds (%d stall retries) |\n' "$name" "$cmd" "$(ls "$dir"/*.eval)" "$secs" "$attempts" >> "$RUNS"
+  printf '| %s | `%s` | `%s` | %ds (%d stall retries) |\n' "$name" "$cmd" "$(ls -t "$dir"/*.eval | head -1)" "$secs" "$attempts" >> "$RUNS"
 }
 
 # Result 1: floors only
