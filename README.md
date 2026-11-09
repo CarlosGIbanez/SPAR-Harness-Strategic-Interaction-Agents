@@ -169,6 +169,8 @@ The **contract effect** (honoring after signing minus honoring in the imposed ve
 
 The game for F2, escalation as a property of the pair; the exact rules are in [nuclear-crisis-formal.md](docs/nuclear-crisis-formal.md). Each round both sides take a rung of Payne's (2026) 30-rung escalation ladder at once, from Complete Surrender to Strategic Nuclear War, at most three rungs above the one they stood on (stepping back is free), and may announce a rung and claim what the territory is worth to them. Territory shifts toward the harsher side, both pay for the hottest rung, heavy fighting burns oil fields, and an order can misfire one to three rungs harsher. It ends by knockout, strategic nuclear war, a ceasefire, or after `max_rounds`.
 
+**F2 pre-registration**, fixed on November 9, 2026, before the full run: [PDF on Google Drive](https://drive.google.com/file/d/1fpwmpHn4Ed9umfvDbgUURIZa-Hu3umxi/view?usp=sharing), SHA-256 `529b3b96cdca37373abd3b0ab970930f0f9f030798c4c45440895e1eeded640a`. The full run uses this branch at commit 4dc388e.
+
 A seat is played by a `model` or one of the F2 bots: `calm`, `strike`, `jump`, `rollback`, `explanation` or `truce`.
 
 ```bash
