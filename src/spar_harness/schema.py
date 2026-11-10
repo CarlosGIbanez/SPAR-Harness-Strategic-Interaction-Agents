@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 PlayerId = Literal["alpha", "beta"]
-TypeField = Literal["capability", "cost_of_conflict"]
+TypeField = Literal["capability", "cost_of_conflict", "k", "c"]
 TalkField = Literal["message", "declared_action", "declared_type", "declared_value"]
 Ending = Literal[
     # crisis bargaining
@@ -21,6 +21,8 @@ Ending = Literal[
     "knockout",
     "strategic_war",
     "ceasefire",
+    # AI race
+    "catastrophe",
     # both: the round cap was reached without agreement
     "horizon",
 ]
@@ -36,6 +38,8 @@ class PartialType(BaseModel):
 
     capability: float | None = None
     cost_of_conflict: float | None = None
+    k: float | None = None  # AI race: development speed
+    c: float | None = None  # AI race: cost of slowing down
 
 
 class UniformPrior(BaseModel):
@@ -111,6 +115,46 @@ class NuclearParams(BaseModel):
     scripted: set[PlayerId] = set()  # played by a script: its orders never misfire
 
 
+class RaceParams(BaseModel):
+    """The fixed numbers of an AI race (F3) game, section 3 of its design."""
+
+    a: float = 0.4  # value of a capability lead
+    sigma: float = 0.0  # safety threshold rise per round (0 = no safety progress)
+    kappa: float = 0.08  # risk slope
+    k_low: float = 1.0
+    k_high: float = 2.0
+    c_low: float = 0.2
+    c_high: float = 0.4
+    continue_prob: float = 0.9
+    max_rounds: int = 20
+    max_duration: int = 20  # largest agreement length N that can be proposed
+    q: float = 0.8  # accuracy of the partial verification signal
+    # background hazard grows by U[0, background_max] each round (0 = off)
+    background_max: float = 0.0
+    # a new negotiation before every round in which no agreement is in force
+    renegotiate: bool = False
+    tell_length: bool = False  # tell the labs the expected number of rounds
+
+
+class RaceCondition(BaseModel):
+    commitment: Literal["none", "declared", "enforced"]
+    verification: Literal["none", "partial", "full"]
+
+
+class LabType(BaseModel):
+    k: float  # development speed (private)
+    c: float  # cost of slowing down (private)
+
+
+class RaceSpec(BaseModel):
+    """What an AI race game is: its numbers, its condition and its wording."""
+
+    params: RaceParams = RaceParams()
+    condition: RaceCondition
+    wording: Literal["labs", "neutral"] = "labs"  # the two wordings fixed in advance
+    fixed_types: dict[PlayerId, LabType] | None = None  # for tests and calibration
+
+
 class Offer(BaseModel):
     kind: Literal["offer"] = "offer"
     split: float = Field(ge=0.0, le=1.0)  # alpha's share of the stake
@@ -122,8 +166,27 @@ class ContractOffer(BaseModel):
     transfer: float = Field(ge=0.0)  # t, paid by the other to the bearer on honoring
 
 
+class AgreementOffer(BaseModel):
+    """AI race: a proposed or counter-proposed agreement length N in rounds.
+
+    The players see "propose"; the kind differs because ContractOffer has it.
+    """
+
+    kind: Literal["propose_duration", "counter"]
+    duration: int | None = None  # None: a proposal of no agreement
+
+
 class Choice(BaseModel):
-    kind: Literal["accept", "reject", "fight", "walk_away", "honor", "renege"]
+    kind: Literal[
+        "accept",
+        "reject",
+        "fight",
+        "walk_away",
+        "honor",
+        "renege",
+        "slow",
+        "accelerate",
+    ]
 
 
 class Rung(BaseModel):
@@ -131,7 +194,9 @@ class Rung(BaseModel):
     rung: int = Field(ge=1, le=30)  # 1 is complete surrender, 30 strategic nuclear war
 
 
-Action = Annotated[Offer | ContractOffer | Choice | Rung, Field(discriminator="kind")]
+Action = Annotated[
+    Offer | ContractOffer | AgreementOffer | Choice | Rung, Field(discriminator="kind")
+]
 
 
 class Move(BaseModel):
@@ -144,9 +209,11 @@ class Move(BaseModel):
     declared_value: float | None = None  # claim about what the stake is worth to it
 
 
-GameId = Literal["crisis_bargaining", "contract_dynamics", "nuclear_crisis"]
+GameId = Literal["crisis_bargaining", "contract_dynamics", "nuclear_crisis", "ai_race"]
 Role = Literal["proposer", "responder", "bearer", "other", "both"]
-ActionKind = Literal["offer", "response", "message", "decision", "rung"]
+ActionKind = Literal[
+    "offer", "response", "message", "decision", "rung", "final", "declaration", "action"
+]
 
 
 class PhaseSpec(BaseModel):
@@ -164,7 +231,8 @@ class StageSpec(BaseModel):
     name: str
     phases: list[PhaseSpec]  # one round's phase sequence
     termination: TerminationSpec
-    proposer_rule: Literal["alternate", "alpha", "beta"] = "alternate"
+    # "game": the game's PROPOSERS rule names the proposer from its state
+    proposer_rule: Literal["alternate", "alpha", "beta", "game"] = "alternate"
     when_exhausted: Literal["horizon", "next_stage"]  # after max_rounds rounds
 
 
@@ -174,6 +242,7 @@ class GameSpec(BaseModel):
     status_quo: float = 0.0  # crisis bargaining: alpha's share without a deal
     contract: ContractParams | None = None  # contract dynamics only
     nuclear: NuclearParams | None = None  # nuclear crisis only
+    race: RaceSpec | None = None  # AI race only
 
 
 class HorizonTreatment(BaseModel):
@@ -271,6 +340,18 @@ class NuclearBriefing(BaseModel):
     start: NuclearStart | None  # the rounds already played, for a mid-crisis start
 
 
+class RaceBriefing(BaseModel):
+    """What an AI race player is told before its first move."""
+
+    me: PlayerId
+    k: float
+    c: float
+    params: RaceParams
+    condition: RaceCondition
+    wording: Literal["labs", "neutral"]
+    proposes_first: bool
+
+
 class ContractState(BaseModel):
     """The public state of a contract: its terms, then nature's draws."""
 
@@ -295,6 +376,59 @@ class NuclearState(BaseModel):
     last_executed: dict[PlayerId, int] = {}  # each side's rung in the last round
 
 
+class RaceNegotiation(BaseModel):
+    """One AI race negotiation: an offer, a reply and, after a counter, a final answer."""
+
+    proposer: PlayerId
+    round: int = 0  # 0 before round 1; otherwise the round that follows it
+    moves: list[tuple[PlayerId, Move]] = []
+    defaulted: list[PlayerId] = []
+    duration: int | None = None  # agreed N, None = no agreement
+
+
+Act = Literal["slow", "accelerate"]
+
+
+class RaceRound(BaseModel):
+    """One AI race round, from the declarations to the catastrophe draw."""
+
+    round: int
+    in_window: bool  # an agreement is in force this round
+    declared: dict[PlayerId, Act]
+    attempted: dict[PlayerId, Act]
+    actual: dict[PlayerId, Act]
+    overridden: dict[PlayerId, bool]
+    report: dict[PlayerId, Act | None]  # signal each lab received about its rival
+    capability: dict[PlayerId, float]  # end of round
+    threshold: float
+    distance: float
+    background: float = 0.0  # accumulated background hazard
+    risk: float
+    payoff: dict[PlayerId, float]
+    catastrophe: bool
+    defaulted: list[PlayerId] = []
+
+
+class RaceState(BaseModel):
+    """The running state of an AI race; its seed fixes every random draw."""
+
+    seed: int
+    types: dict[PlayerId, LabType]
+    proposer: PlayerId  # of the next negotiation
+    negotiation: RaceNegotiation | None = None  # the one under way
+    negotiations: list[RaceNegotiation] = []  # finished; the first is before round 1
+    duration: int | None = None  # N of the latest agreement; None if there was none
+    window_end: int = 0  # last round covered by an agreement (0 = none yet)
+    capability: dict[PlayerId, float] = {"alpha": 0.0, "beta": 0.0}
+    threshold: float = 0.0
+    background: float = 0.0
+    last_report: dict[PlayerId, Act | None] = {"alpha": None, "beta": None}
+    overridden: dict[PlayerId, bool] = {"alpha": False, "beta": False}
+    declared: dict[PlayerId, Act] = {}  # this round's declarations
+    round_defaulted: list[PlayerId] = []  # this round's default moves, in order
+    rounds: list[RaceRound] = []
+
+
 # What one player privately learns when a round ends. The game that sends it
 # defines the keys, and its presenter renders them.
 Report = dict[str, str | int | float | bool | None]
@@ -305,12 +439,14 @@ class Observation(BaseModel):
 
     recipient: PlayerId
     round: int
-    briefing: Briefing | ContractBriefing | NuclearBriefing | None = (
+    briefing: Briefing | ContractBriefing | NuclearBriefing | RaceBriefing | None = (
         None  # only on the first move
     )
     contract: ContractState | None = None  # contract dynamics, once signed
     opponent_moves: list[Move] = []  # since the recipient's last move
     reports: list[Report] = []  # end-of-round reports since the recipient's last move
+    # where the game stands for this player now, from the game's SITUATIONS rule
+    situation: Report | None = None
 
 
 class PhaseContext(BaseModel):
@@ -349,6 +485,7 @@ class EpisodeState(BaseModel):
     types: dict[PlayerId, PrivateType] = {}
     contract: ContractState | None = None  # contract dynamics, once signed
     nuclear: NuclearState | None = None  # nuclear crisis
+    race: RaceState | None = None  # AI race
     rounds: list[RoundRecord] = []
     ending: Ending | None = None
     payoffs: dict[PlayerId, float] | None = None

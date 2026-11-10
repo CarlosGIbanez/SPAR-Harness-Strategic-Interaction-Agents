@@ -232,6 +232,6 @@ CRISIS_PRESENTER = Presenter(
     system_prompt=SYSTEM_PROMPT,
     render=render_observation,
     tool=submit_move_tool,
-    parse=move_from_arguments,
+    parse=lambda me, arguments, context: move_from_arguments(me, arguments),
     probes=probes,
 )

@@ -213,7 +213,7 @@ def contract_presenter(
         system_prompt=_system_prompt(setting, presentation, params),
         render=render,
         tool=tool,
-        parse=parse,
+        parse=lambda me, arguments, context=None: parse(me, arguments),
         probes=probes,
         error=error,
         # As on the f1-burden-lottery branch, where contract runs were made.

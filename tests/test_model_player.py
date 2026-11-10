@@ -59,7 +59,7 @@ PRESENTER = Presenter(
     system_prompt="You play a toy game. Call {tool} to move.",
     render=lambda me, observation, context: f"Round {context.round}: your move.",
     tool=lambda observation, context: SUBMIT,
-    parse=lambda me, arguments: Move(action=Offer(split=arguments["split"])),
+    parse=lambda me, arguments, context: Move(action=Offer(split=arguments["split"])),
     probes=before,
     after_move=after,
     answer_tool=ANSWER_WITH_CHOICE_TOOL,

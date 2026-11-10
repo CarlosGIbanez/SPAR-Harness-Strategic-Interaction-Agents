@@ -1,19 +1,22 @@
-# F3 race game (commitment and verification), additive to the SPAR harness
+# F3 race game (commitment and verification), on the shared SPAR harness
 
-New files only; no shared file is changed. `f3_task.py` imports `mean_of_defined` and
-`mean_of_defined_reducer` from the existing `spar_harness/task.py`.
+The F3 game runs on the shared referee (`referee.py`), with its rules registered as
+plugins like the other games. Its labs are `alpha` and `beta` inside the harness and
+Lab A and Lab B (Firm A and Firm B) in every text.
 
 | File | What it does |
 |---|---|
-| f3_schema.py | types: parameters, condition, wording, moves, observations, episode record |
-| f3_game.py | rules: type draws, risk, payoffs, matched random streams, verification signal, benchmark |
-| f3_referee.py | negotiation, rounds (declare, act, signal, update, catastrophe), enforcement |
+| f3_game.py | rules and referee plugins: type draws, negotiation, rounds (declare, act, signal, update, catastrophe), enforcement, matched random streams, benchmark |
 | f3_prompts.py | prompt text in two wordings (labs, neutral); comprehension and interview questions |
-| f3_model_player.py | Inspect adapter: one `submit_move` tool (same schema in every phase), comprehension probe, post-game interview |
+| f3_presenter.py | how a model plays a lab: one `submit_move` tool (same schema in every phase), comprehension probe, post-game interview, transcript |
 | f3_bots.py | always_slow, always_accelerate, secret_defector, tit_for_tat, random, scripted |
 | f3_measures.py | outcome measures of section 6 |
 | f3_task.py | Inspect task `f3_race`: one condition per call, seed pairs with seats swapped |
 | f3_sweep.py | prints or runs the `inspect eval` commands for the six design cells and three model pairings |
+
+The F3 types (`RaceParams`, `RaceCondition`, `RaceSpec`, `RaceState`, `RaceRound`,
+`RaceNegotiation`) are in `schema.py`. The episode record is the shared
+`EpisodeState`; F3's own part is under `episode.race` in the log store.
 
 ## Run
 ```bash
@@ -39,6 +42,8 @@ The first pilot setting is `-T sigma=0.5 -T kappa=0.12`.
   questions right before play), `understanding` (the two factual interview questions right after).
   The free-text interview answers are stored in the log under `interviews` for coding.
 - The tool schema must not change between phases: Anthropic binds thinking blocks to the tools list.
+- Moving onto the shared engine changed no prompt, tool schema, random draw, score or metric: a
+  run before and after the move was compared call by call.
 - Invalid moves are retried twice, then replaced by a default and counted in `defaulted_moves`.
 - Renegotiation (`-T renegotiate=true`, off by default): before every round in which no agreement is in
   force, the labs negotiate again with the same procedure (one counter), and the proposer alternates.

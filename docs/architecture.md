@@ -1,6 +1,6 @@
 # Architecture
 
-How the code in `src/spar_harness/` is organized: its modules, types and functions, and how they connect. For the games themselves, see [crisis-bargaining-formal.md](crisis-bargaining-formal.md), [contract-dynamics-formal.md](contract-dynamics-formal.md) and [nuclear-crisis-formal.md](nuclear-crisis-formal.md).
+How the code in `src/spar_harness/` is organized: its modules, types and functions, and how they connect. For the games themselves, see [crisis-bargaining-formal.md](crisis-bargaining-formal.md), [contract-dynamics-formal.md](contract-dynamics-formal.md) and [nuclear-crisis-formal.md](nuclear-crisis-formal.md); the AI race (F3) is described in [README_F3.md](../README_F3.md).
 
 ## 1. The big picture
 
@@ -57,6 +57,10 @@ flowchart TB
 | `contract_task.py` | The contract dynamics task and its scorers | `contract_dynamics`, `contract_outcome_scorer`, `contract_seat_scorer` |
 | `nuclear_task.py` | The nuclear crisis task and its scorers | `nuclear_crisis`, `nuclear_outcome_scorer`, `nuclear_seat_scorer` |
 | `nuclear_check.py` | The rung-order check (F2 step 0): which of two options is harsher, after the game's briefing | `nuclear_rung_order`, `rung_pair`, `harsher_option` |
+| `f3_game.py` | AI race (F3): rules, matched random streams and the game's plugins | `ai_race_game`, `draw_types`, `draw_proposer`, `risk`, `round_payoff`, `report_about`, `mutual_slowdown_benchmark`, `start`, `briefing`, `proposer`, `phase_open`, `after_phase`, `situation`, `move_problem`, `after_round`, `default_move`, `episode_payoffs`, `OPTIONS` |
+| `f3_prompts.py`, `f3_presenter.py` | The AI race's text in its two wordings, and its presenter (one per lab) | `system_prompt`, `render_observation`, `race_presenter`, `interview_response`, `transcript` |
+| `f3_bots.py`, `f3_measures.py` | The AI race's scripted labs and outcome measures | `always_slow`, `always_accelerate`, `secret_defector`, `tit_for_tat`, `random_bot`, `scripted`, `outcome_measures` |
+| `f3_task.py`, `f3_sweep.py` | The AI race task and its scorers, and the commands for its grid of conditions | `f3_race`, `race_config`, `outcome_scorer`, `seat_scorer`, `commands` |
 | `__init__.py` | The `main()` stub left over from project scaffolding (unused) | |
 
 ### Import graph
@@ -369,19 +373,24 @@ Default moves per game:
 
 ### 4.5 Plugin dicts and other constants
 
-| Name | Maps `game_id` to | Crisis bargaining | Contract dynamics | Nuclear crisis |
-|---|---|---|---|---|
-| `ALLOWED_ACTIONS` | `ActionKind -> set of kinds` | offer: `{offer, fight}`; response: `{accept, reject, fight}` | offer: `{propose, walk_away}`; response: `{accept, reject, walk_away}`; message: `{}`; decision: `{honor, renege}` | rung: `{rung}` |
-| `BRIEFINGS` | `(config, state, player) -> briefing` | `briefing` | `briefing` | `briefing`: the player's own worth |
-| `ENDING_RULES` | `(Move) -> Ending \| "next_stage" \| None` | accept means agreement, fight means fight | accept means `next_stage`; `walk_away`, `honor` and `renege` end the episode | none: the state ends it, in `after_round` |
-| `PAYOFF_MODELS` | `(GameSpec, EpisodeState) -> payoffs` | `episode_payoffs` | `episode_payoffs` | `episode_payoffs` |
-| `DEFAULT_MOVES` | `(GameSpec, EpisodeState, PlayerId, PhaseContext) -> Move` | `default_move` | `default_move` | `default_move`: hold the last rung |
-| `BEFORE_STAGE` (optional) | `(GameSpec, EpisodeState, StageSpec, Random) -> Ending \| None` | (absent) | `before_stage`: before `persuasion`, records the contract and draws shock and bearer | `before_stage`: sets up the territory, or a mid-crisis start |
-| `MOVE_CHECKS` (optional) | `(GameSpec, Move) -> problem \| None` | (absent) | `move_problem`: the transfer cap | `move_problem`: announcements are rungs |
-| `STATE_CHECKS` (optional) | `(GameSpec, EpisodeState, PlayerId, Move) -> problem \| None` | (absent) | (absent) | `climb_problem`: at most three rungs above the last executed one |
-| `ACTOR_RULES` (optional) | `(Role, EpisodeState) -> PlayerId` | (absent) | `actor_for`: bearer and other | (absent) |
-| `AFTER_ROUND` (optional) | `(GameSpec, EpisodeState, RoundRecord) -> RoundEnd` | (absent) | (absent) | `after_round`: territory, costs, burning oil, reports, endings |
-| `NOISE` (optional) | `(GameSpec, EpisodeState, PlayerId, Move, Random) -> Move`, the move as carried out when the noise treatment hits | (absent) | (absent) | `misfire`: one to three rungs harsher |
+| Name | Maps `game_id` to | Crisis bargaining | Contract dynamics | Nuclear crisis | AI race |
+|---|---|---|---|---|---|
+| `ALLOWED_ACTIONS` | `ActionKind -> set of kinds` | offer: `{offer, fight}`; response: `{accept, reject, fight}` | offer: `{propose, walk_away}`; response: `{accept, reject, walk_away}`; message: `{}`; decision: `{honor, renege}` | rung: `{rung}` | offer: `{propose_duration}`; response: `{accept, reject, counter}`; final: `{accept, reject}`; declaration and action: `{slow, accelerate}` |
+| `BRIEFINGS` | `(config, state, player) -> briefing` | `briefing` | `briefing` | `briefing`: the player's own worth | `briefing`: the lab's k and c |
+| `ENDING_RULES` | `(Move) -> Ending \| "next_stage" \| None` | accept means agreement, fight means fight | accept means `next_stage`; `walk_away`, `honor` and `renege` end the episode | none: the state ends it, in `after_round` | none: rounds end in `after_round` |
+| `PAYOFF_MODELS` | `(GameSpec, EpisodeState) -> payoffs` | `episode_payoffs` | `episode_payoffs` | `episode_payoffs` | `episode_payoffs`: the sum of round payoffs |
+| `DEFAULT_MOVES` | `(GameSpec, EpisodeState, PlayerId, PhaseContext) -> Move` | `default_move` | `default_move` | `default_move`: hold the last rung | `default_move`: no agreement, reject, Slow down |
+| `BEFORE_STAGE` (optional) | `(GameSpec, EpisodeState, StageSpec, Random) -> Ending \| None` | (absent) | `before_stage`: before `persuasion`, records the contract and draws shock and bearer | `before_stage`: sets up the territory, or a mid-crisis start | (absent) |
+| `MOVE_CHECKS` (optional) | `(GameSpec, Move) -> problem \| None` | (absent) | `move_problem`: the transfer cap | `move_problem`: announcements are rungs | (absent) |
+| `STATE_CHECKS` (optional) | `(GameSpec, EpisodeState, PlayerId, Move) -> problem \| None` | (absent) | (absent) | `climb_problem`: at most three rungs above the last executed one | `move_problem`: the duration's range, a counter that differs, positive stated k and c |
+| `ACTOR_RULES` (optional) | `(Role, EpisodeState) -> PlayerId` | (absent) | `actor_for`: bearer and other | (absent) | (absent) |
+| `AFTER_ROUND` (optional) | `(GameSpec, EpisodeState, RoundRecord) -> RoundEnd` | (absent) | (absent) | `after_round`: territory, costs, burning oil, reports, endings | `after_round`: enforcement, update, risk, payoffs, signals, catastrophe and stopping draws |
+| `NOISE` (optional) | `(GameSpec, EpisodeState, PlayerId, Move, Random) -> Move`, the move as carried out when the noise treatment hits | (absent) | (absent) | `misfire`: one to three rungs harsher | (absent) |
+| `START` (optional) | `(EpisodeConfig, EpisodeState) -> None`, sets up the game's state before the briefings | (absent) | (absent) | (absent) | `start`: types, first proposer, seed |
+| `PROPOSERS` (optional) | `(EpisodeState) -> PlayerId`, for stages with `proposer_rule="game"` | (absent) | (absent) | (absent) | `proposer`: drawn at random, then alternating per negotiation |
+| `OPEN_PHASES` (optional) | `(GameSpec, EpisodeState, RoundRecord, PhaseSpec) -> bool`; a closed phase asks no one | (absent) | (absent) | (absent) | `phase_open`: renegotiation only outside an agreement, replies only while a negotiation is open |
+| `AFTER_PHASE` (optional) | `(GameSpec, EpisodeState, RoundRecord, PhaseSpec, moves, defaulted) -> None`, for games where a player moves more than once a round (`RoundRecord.moves` keeps only the last) | (absent) | (absent) | (absent) | `after_phase`: records negotiations and declarations |
+| `SITUATIONS` (optional) | `(GameSpec, EpisodeState, RoundRecord, PhaseSpec, PlayerId) -> Report`, shown as `Observation.situation` | (absent) | (absent) | (absent) | `situation`: capability, threshold, agreement, report, override, pending offer |
 
 The optional dicts are read with `.get`, so a game without nature or extra roles simply has no entry. Other constants: `MAX_RETRIES = 2` and `TALK_FIELDS`.
 
@@ -500,7 +509,7 @@ sequenceDiagram
     MP-->>R: Move
 ```
 
-A `Presenter` is a frozen dataclass of five plain values, plus two optional ones:
+A `Presenter` is a frozen dataclass of five plain values, plus optional settings. The AI race (`f3_presenter.py`) sets `answer_tool=None` (its conversation's only tool is `submit_move`), `ignore_stray_calls=False` (anything but exactly one `submit_move` call is invalid), `check_required=False` (missing arguments are reported by its parser), `announce_default=False` and a `debrief`: the post-episode interview, asked on a copy of the conversation with tools offered but none allowed. Its comprehension probe uses `ask.with_tool`, on a copy with its own answer tool, before the lab's first move. These settings keep its conversations exactly as they were before it moved onto the shared engine. Its presenter is built per lab, because the system prompt names the lab.
 
 | Field | Crisis bargaining | Contract dynamics | Nuclear crisis |
 |---|---|---|---|
@@ -516,10 +525,12 @@ A `Presenter` is a frozen dataclass of five plain values, plus two optional ones
 
 Two rules about tools, each checked by a test:
 
-- **One tools list per conversation.** The list is `[submit_move, answer_probe]` (the presenter's `answer_tool`), computed on the first call and then reused for every move and every probe. Models with extended thinking return signed reasoning that is bound to the tools list it was created with, so changing the list mid-conversation makes the API reject the request (ADR 0001, amended). The current options are therefore stated in the rendered text (for example, "Your options: offer, fight."), not in the schema, and the referee rejects anything that isn't open.
+- **One tools list per conversation.** The list is `[submit_move, answer_probe]` (the presenter's `answer_tool`; just `[submit_move]` when it is `None`), computed on the first call and then reused for every move and every probe. Models with extended thinking return signed reasoning that is bound to the tools list it was created with, so changing the list mid-conversation makes the API reject the request (ADR 0001, amended). The current options are therefore stated in the rendered text (for example, "Your options: offer, fight."), not in the schema, and the referee rejects anything that isn't open.
 - **Every tool call gets a matching tool result** before the next generate, labeled with the right function. A stray `answer_probe` call made alongside a move is answered with "Ignored" and doesn't invalidate the move.
 
-## 7. The Inspect shell (`task.py`, `contract_task.py`)
+## 7. The Inspect shell (`task.py`, `contract_task.py`, `nuclear_task.py`, `f3_task.py`)
+
+Every task uses the shared `referee()` solver. Two dicts in `task.py` hold what only some games do: `DEBRIEFS` (games that interview model players after the episode; the AI race stores the replies under `interviews`) and `TRANSCRIPTS` (games with a public transcript of their own; the AI race keeps the format it always had).
 
 ### 7.1 From parameters to metrics
 

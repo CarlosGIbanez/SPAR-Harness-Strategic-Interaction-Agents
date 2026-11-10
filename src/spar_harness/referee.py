@@ -10,7 +10,7 @@ import random
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
-from spar_harness import contract_dynamics, crisis_bargaining, nuclear_crisis
+from spar_harness import contract_dynamics, crisis_bargaining, f3_game, nuclear_crisis
 from spar_harness.priors import draw_types
 from spar_harness.schema import (
     Briefing,
@@ -51,26 +51,31 @@ ALLOWED_ACTIONS = {
     "crisis_bargaining": crisis_bargaining.ALLOWED_ACTIONS,
     "contract_dynamics": contract_dynamics.ALLOWED_ACTIONS,
     "nuclear_crisis": nuclear_crisis.ALLOWED_ACTIONS,
+    "ai_race": f3_game.ALLOWED_ACTIONS,
 }
 BRIEFINGS = {
     "crisis_bargaining": crisis_bargaining.briefing,
     "contract_dynamics": contract_dynamics.briefing,
     "nuclear_crisis": nuclear_crisis.briefing,
+    "ai_race": f3_game.briefing,
 }
 ENDING_RULES = {
     "crisis_bargaining": crisis_bargaining.ending_after_move,
     "contract_dynamics": contract_dynamics.ending_after_move,
     "nuclear_crisis": nuclear_crisis.ending_after_move,
+    "ai_race": f3_game.ending_after_move,
 }
 PAYOFF_MODELS = {
     "crisis_bargaining": crisis_bargaining.episode_payoffs,
     "contract_dynamics": contract_dynamics.episode_payoffs,
     "nuclear_crisis": nuclear_crisis.episode_payoffs,
+    "ai_race": f3_game.episode_payoffs,
 }
 DEFAULT_MOVES = {
     "crisis_bargaining": crisis_bargaining.default_move,
     "contract_dynamics": contract_dynamics.default_move,
     "nuclear_crisis": nuclear_crisis.default_move,
+    "ai_race": f3_game.default_move,
 }
 # nature's moves before each stage; games without any are absent
 BEFORE_STAGE = {
@@ -85,18 +90,49 @@ MOVE_CHECKS = {
 # rules that also depend on the game so far, such as how far a side may climb
 STATE_CHECKS: dict[
     str, Callable[[GameSpec, EpisodeState, PlayerId, Move], str | None]
-] = {"nuclear_crisis": nuclear_crisis.climb_problem}
+] = {
+    "nuclear_crisis": nuclear_crisis.climb_problem,
+    "ai_race": f3_game.move_problem,
+}
 # players for roles other than proposer and responder
 ACTOR_RULES = {"contract_dynamics": contract_dynamics.actor_for}
 # what happens once every phase of a round is played: private reports to
 # each player, and endings that depend on the game's state
 AFTER_ROUND: dict[str, Callable[[GameSpec, EpisodeState, RoundRecord], RoundEnd]] = {
-    "nuclear_crisis": nuclear_crisis.after_round
+    "nuclear_crisis": nuclear_crisis.after_round,
+    "ai_race": f3_game.after_round,
 }
 # how a chosen move comes out when the noise treatment hits it
 NOISE: dict[
     str, Callable[[GameSpec, EpisodeState, PlayerId, Move, random.Random], Move]
 ] = {"nuclear_crisis": nuclear_crisis.misfire}
+
+# Optional rules for games whose rounds are more than one move per player.
+# Each is looked up with .get, so a game without one is unaffected.
+# Sets up the game's state from the config, before the briefings.
+START: dict[str, Callable[[EpisodeConfig, EpisodeState], None]] = {
+    "ai_race": f3_game.start
+}
+# The proposer of a round, for stages with proposer_rule "game".
+PROPOSERS: dict[str, Callable[[EpisodeState], PlayerId]] = {"ai_race": f3_game.proposer}
+# Whether a phase is played this round; a skipped phase asks no one.
+OPEN_PHASES: dict[
+    str, Callable[[GameSpec, EpisodeState, RoundRecord, PhaseSpec], bool]
+] = {"ai_race": f3_game.phase_open}
+# Called after every phase with its chosen moves and the players who defaulted
+# in it, in the order they were asked: record.moves keeps only a player's last
+# move of the round, so games where a player moves twice keep their own record.
+AFTER_PHASE: dict[
+    str,
+    Callable[
+        [GameSpec, EpisodeState, RoundRecord, PhaseSpec, dict[PlayerId, Move], list],
+        None,
+    ],
+] = {"ai_race": f3_game.after_phase}
+# Where the game stands for a player about to move, shown in its observation.
+SITUATIONS: dict[
+    str, Callable[[GameSpec, EpisodeState, RoundRecord, PhaseSpec, PlayerId], Report]
+] = {"ai_race": f3_game.situation}
 
 StageOutcome = Ending | Literal["next_stage"] | None
 
@@ -107,6 +143,9 @@ async def run_episode(
     game = config.game
     types = draw_types(config.priors, config.seed) if config.priors else {}
     state = EpisodeState(types=types)
+    start = START.get(game.game_id)
+    if start is not None:
+        start(config, state)
     nature_rng = random.Random(f"nature-{config.seed}")
     stop_rng = random.Random(f"random_stop-{config.seed}")
     inbox: dict[PlayerId, list[Move]] = {"alpha": [], "beta": []}
@@ -165,25 +204,44 @@ async def _play_round(
     round_number: int,
 ) -> StageOutcome:
     game = config.game
-    proposer = _proposer(stage.proposer_rule, round_number)
+    if stage.proposer_rule == "game":
+        proposer = PROPOSERS[game.game_id](state)
+    else:
+        proposer = _proposer(stage.proposer_rule, round_number)
     record = RoundRecord(
         stage=stage.name,
         round=round_number,
         proposer=proposer if _has_offers(stage) else None,
     )
     state.rounds.append(record)
+    open_phase = OPEN_PHASES.get(game.game_id)
+    after_phase = AFTER_PHASE.get(game.game_id)
     for phase in stage.phases:
+        if open_phase is not None and not open_phase(game, state, record, phase):
+            continue
         actors = _actors(game.game_id, phase, proposer, state)
+        defaulted: list[PlayerId] = []  # in the order their requests ended
         # Simultaneous movers are asked together: each observation is built
         # before any move of the phase is in, so neither sees the other's.
         moves = await asyncio.gather(
             *(
                 _phase_move(
-                    config, players, state, inbox, reports, briefings, phase, record, p
+                    config,
+                    players,
+                    state,
+                    inbox,
+                    reports,
+                    briefings,
+                    phase,
+                    record,
+                    p,
+                    defaulted,
                 )
                 for p in actors
             )
         )
+        if after_phase is not None:
+            after_phase(game, state, record, phase, dict(zip(actors, moves)), defaulted)
         # The opponent and the rules see the executed move; the record keeps
         # the chosen one too, for measures of intent.
         executed = [
@@ -219,8 +277,10 @@ async def _phase_move(
     phase: PhaseSpec,
     record: RoundRecord,
     player: PlayerId,
+    defaulted: list[PlayerId],
 ) -> Move:
-    """One player's move in a phase: a valid move, or the game's default."""
+    """One player's move in a phase: a valid move, or the game's default, in
+    which case the player is added to `defaulted`."""
     game = config.game
     context = PhaseContext(
         round=record.round,
@@ -237,6 +297,7 @@ async def _phase_move(
         opponent_moves=inbox[player],
         contract=state.contract.model_copy() if state.contract else None,
         reports=reports[player],
+        situation=_situation(game, state, record, phase, player),
     )
     inbox[player] = []
     reports[player] = []
@@ -244,7 +305,19 @@ async def _phase_move(
     if move is None:
         move = DEFAULT_MOVES[game.game_id](game, state, player, context)
         record.defaulted.add(player)
+        defaulted.append(player)
     return move
+
+
+def _situation(
+    game: GameSpec,
+    state: EpisodeState,
+    record: RoundRecord,
+    phase: PhaseSpec,
+    player: PlayerId,
+) -> Report | None:
+    situation = SITUATIONS.get(game.game_id)
+    return situation(game, state, record, phase, player) if situation else None
 
 
 def _executed(
