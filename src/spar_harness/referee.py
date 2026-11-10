@@ -10,7 +10,7 @@ import random
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
-from spar_harness import contract_dynamics, crisis_bargaining
+from spar_harness import contract_dynamics, crisis_bargaining, nuclear_crisis
 from spar_harness.priors import draw_types
 from spar_harness.schema import (
     Briefing,
@@ -39,42 +39,64 @@ class InvalidMove(Exception):
 Player = Callable[[Observation, PhaseContext], Awaitable[Move]]
 
 MAX_RETRIES = 2
-TALK_FIELDS: tuple[TalkField, ...] = ("message", "declared_action", "declared_type")
+TALK_FIELDS: tuple[TalkField, ...] = (
+    "message",
+    "declared_action",
+    "declared_type",
+    "declared_value",
+)
 
 # Game plugins. Each maps a game_id to a function or table.
 ALLOWED_ACTIONS = {
     "crisis_bargaining": crisis_bargaining.ALLOWED_ACTIONS,
     "contract_dynamics": contract_dynamics.ALLOWED_ACTIONS,
+    "nuclear_crisis": nuclear_crisis.ALLOWED_ACTIONS,
 }
 BRIEFINGS = {
     "crisis_bargaining": crisis_bargaining.briefing,
     "contract_dynamics": contract_dynamics.briefing,
+    "nuclear_crisis": nuclear_crisis.briefing,
 }
 ENDING_RULES = {
     "crisis_bargaining": crisis_bargaining.ending_after_move,
     "contract_dynamics": contract_dynamics.ending_after_move,
+    "nuclear_crisis": nuclear_crisis.ending_after_move,
 }
 PAYOFF_MODELS = {
     "crisis_bargaining": crisis_bargaining.episode_payoffs,
     "contract_dynamics": contract_dynamics.episode_payoffs,
+    "nuclear_crisis": nuclear_crisis.episode_payoffs,
 }
 DEFAULT_MOVES = {
     "crisis_bargaining": crisis_bargaining.default_move,
     "contract_dynamics": contract_dynamics.default_move,
+    "nuclear_crisis": nuclear_crisis.default_move,
 }
 # nature's moves before each stage; games without any are absent
-BEFORE_STAGE = {"contract_dynamics": contract_dynamics.before_stage}
+BEFORE_STAGE = {
+    "contract_dynamics": contract_dynamics.before_stage,
+    "nuclear_crisis": nuclear_crisis.before_stage,
+}
 # game-specific rules a move must satisfy; they return a problem or None
-MOVE_CHECKS = {"contract_dynamics": contract_dynamics.move_problem}
+MOVE_CHECKS = {
+    "contract_dynamics": contract_dynamics.move_problem,
+    "nuclear_crisis": nuclear_crisis.move_problem,
+}
+# rules that also depend on the game so far, such as how far a side may climb
+STATE_CHECKS: dict[
+    str, Callable[[GameSpec, EpisodeState, PlayerId, Move], str | None]
+] = {"nuclear_crisis": nuclear_crisis.climb_problem}
 # players for roles other than proposer and responder
 ACTOR_RULES = {"contract_dynamics": contract_dynamics.actor_for}
 # what happens once every phase of a round is played: private reports to
 # each player, and endings that depend on the game's state
-AFTER_ROUND: dict[str, Callable[[GameSpec, EpisodeState, RoundRecord], RoundEnd]] = {}
+AFTER_ROUND: dict[str, Callable[[GameSpec, EpisodeState, RoundRecord], RoundEnd]] = {
+    "nuclear_crisis": nuclear_crisis.after_round
+}
 # how a chosen move comes out when the noise treatment hits it
 NOISE: dict[
     str, Callable[[GameSpec, EpisodeState, PlayerId, Move, random.Random], Move]
-] = {}
+] = {"nuclear_crisis": nuclear_crisis.misfire}
 
 StageOutcome = Ending | Literal["next_stage"] | None
 
@@ -218,7 +240,7 @@ async def _phase_move(
     )
     inbox[player] = []
     reports[player] = []
-    move = await _request_move(game, players[player], observation, context)
+    move = await _request_move(game, state, players[player], observation, context)
     if move is None:
         move = DEFAULT_MOVES[game.game_id](game, state, player, context)
         record.defaulted.add(player)
@@ -249,7 +271,11 @@ def _executed(
 
 
 async def _request_move(
-    game: GameSpec, player: Player, observation: Observation, context: PhaseContext
+    game: GameSpec,
+    state: EpisodeState,
+    player: Player,
+    observation: Observation,
+    context: PhaseContext,
 ) -> Move | None:
     """Ask for a move, retrying with the reason whenever it is invalid.
 
@@ -258,7 +284,7 @@ async def _request_move(
     for _ in range(1 + MAX_RETRIES):
         try:
             move = await player(observation, context)
-            _validate(game, move, context)
+            _validate(game, state, observation.recipient, move, context)
             return move
         except InvalidMove as invalid:
             # A retry carries no new information, only the reason.
@@ -269,7 +295,13 @@ async def _request_move(
     return None
 
 
-def _validate(game: GameSpec, move: Move, context: PhaseContext) -> None:
+def _validate(
+    game: GameSpec,
+    state: EpisodeState,
+    player: PlayerId,
+    move: Move,
+    context: PhaseContext,
+) -> None:
     allowed = context.allowed_actions
     if move.action is None:
         if allowed:
@@ -297,6 +329,9 @@ def _validate(game: GameSpec, move: Move, context: PhaseContext) -> None:
             )
     move_check = MOVE_CHECKS.get(game.game_id)
     problem = move_check(game, move) if move_check else None
+    state_check = STATE_CHECKS.get(game.game_id)
+    if problem is None and state_check is not None:
+        problem = state_check(game, state, player, move)
     if problem is not None:
         raise InvalidMove(problem)
 
@@ -313,6 +348,7 @@ def _talk_fields(config: EpisodeConfig) -> set[TalkField]:
         "message": talk.messages,
         "declared_action": talk.declared_action,
         "declared_type": talk.declared_type and bool(_private_fields(config)),
+        "declared_value": talk.declared_value,
     }
     return {field for field, on in switches.items() if on}
 

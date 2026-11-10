@@ -10,10 +10,12 @@ from inspect_ai.util import JSONSchema
 
 from spar_harness.model_player import (
     ANSWER_WITH_CHOICE_TOOL,
+    REPLACED,
     Presenter,
     ProbeResponse,
     model_player,
 )
+from spar_harness.referee import InvalidMove
 from spar_harness.schema import Move, Observation, Offer, PhaseContext
 
 SUBMIT = ToolInfo(
@@ -63,7 +65,7 @@ PRESENTER = Presenter(
 )
 
 
-def play_two_rounds():
+def play_two_rounds(choice="strike", answer=70):
     """Returns every model call (input, tools) and the probe log."""
     calls = []
 
@@ -71,7 +73,7 @@ def play_two_rounds():
         calls.append((input, tools))
         prompt = [message for message in input if message.role == "user"][-1].text
         if "strike or accident" in prompt:
-            arguments = {"answer": 70, "choice": "strike"}
+            arguments = {"answer": answer, "choice": choice}
             return ModelOutput.for_tool_call("mock", "answer_probe", arguments)
         if "Private question" in prompt:
             return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 7})
@@ -131,6 +133,119 @@ def test_a_probe_with_options_logs_the_choice_and_the_number():
         ("strike", 70.0),
         ("strike", 70.0),
     ]
+
+
+def test_a_choice_is_matched_whatever_its_case():
+    _, log = play_two_rounds(choice=" Strike")
+    assert {response.choice for response in log if response.probe_id == "strike"} == {
+        "strike"
+    }
+
+
+def test_a_probe_after_a_retried_move_sees_the_rounds_observation():
+    seen = []
+
+    async def after_seeing(ask, me, observation, context):
+        seen.append(observation)
+        return []
+
+    def mock(input, tools, tool_choice, config):
+        if len([message for message in input if message.role == "assistant"]) == 0:
+            return ModelOutput.from_content("mock", "I won't move.")
+        if "Private question" in input[-1].text:
+            return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 7})
+        return ModelOutput.for_tool_call("mock", "submit_move", {"split": 0.4})
+
+    presenter = Presenter(
+        system_prompt=PRESENTER.system_prompt,
+        render=PRESENTER.render,
+        tool=PRESENTER.tool,
+        parse=PRESENTER.parse,
+        probes=lambda ask, me, observation, context: asyncio.sleep(0, []),
+        after_move=after_seeing,
+    )
+    play = model_player(get_model("mockllm/model", custom_outputs=mock), [], presenter)
+    shown = Observation(recipient="alpha", round=1, reports=[{"round": 1}])
+    context = PhaseContext(
+        round=1, role="proposer", action_kind="offer", allowed_actions={"offer"}
+    )
+
+    async def retried_move():
+        try:
+            await play(shown, context)
+        except InvalidMove:
+            retry = context.model_copy(update={"error": "No move."})
+            return await play(Observation(recipient="alpha", round=1), retry)
+
+    assert asyncio.run(retried_move()) == Move(action=Offer(split=0.4))
+    assert seen == [shown]
+
+
+def test_a_move_missing_a_required_field_is_invalid():
+    def mock(input, tools, tool_choice, config):
+        return ModelOutput.for_tool_call("mock", "submit_move", {})
+
+    play = model_player(get_model("mockllm/model", custom_outputs=mock), [], PRESENTER)
+    context = PhaseContext(
+        round=1, role="proposer", action_kind="offer", allowed_actions={"offer"}
+    )
+    try:
+        asyncio.run(play(Observation(recipient="alpha", round=1), context))
+    except InvalidMove as invalid:
+        assert "missing split" in str(invalid)
+    else:
+        raise AssertionError("the move was accepted")
+
+
+def test_after_a_default_move_the_model_is_told_its_move_was_replaced():
+    inputs = []
+
+    def mock(input, tools, tool_choice, config):
+        inputs.append(input)
+        if "Private question" in input[-1].text:
+            return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 7})
+        if "Round 2" in input[-1].text:
+            return ModelOutput.for_tool_call("mock", "submit_move", {"split": 0.4})
+        return ModelOutput.for_tool_call("mock", "submit_move", {})  # always invalid
+
+    presenter = Presenter(
+        system_prompt=PRESENTER.system_prompt,
+        render=PRESENTER.render,
+        tool=PRESENTER.tool,
+        parse=PRESENTER.parse,
+        probes=lambda ask, me, observation, context: asyncio.sleep(0, []),
+    )
+    play = model_player(get_model("mockllm/model", custom_outputs=mock), [], presenter)
+
+    def context(round_number, error=None):
+        return PhaseContext(
+            round=round_number,
+            role="proposer",
+            action_kind="offer",
+            allowed_actions={"offer"},
+            error=error,
+        )
+
+    async def default_then_move():
+        for error in (None, "Missing split.", "Missing split."):
+            try:
+                await play(Observation(recipient="alpha", round=1), context(1, error))
+            except InvalidMove:
+                pass
+        return await play(Observation(recipient="alpha", round=2), context(2))
+
+    assert asyncio.run(default_then_move()) == Move(action=Offer(split=0.4))
+    *_, result, round_two = inputs[-1]
+    assert result.role == "tool" and result.text == REPLACED
+    assert round_two.text == "Round 2: your move."
+
+
+def test_a_choice_is_kept_without_a_number():
+    _, log = play_two_rounds(choice="strike", answer=None)
+    strike = [response for response in log if response.probe_id == "strike"]
+    assert {(response.choice, response.answer) for response in strike} == {
+        ("strike", None)
+    }
 
 
 def test_every_probe_answer_is_logged_with_its_round():
