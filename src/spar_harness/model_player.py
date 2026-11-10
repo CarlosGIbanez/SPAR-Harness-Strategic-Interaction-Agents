@@ -113,9 +113,18 @@ class Presenter:
     tool: Callable[[Observation, PhaseContext], ToolInfo]
     parse: Callable[[PlayerId, dict[str, Any]], Move]  # raises InvalidMove
     probes: Probes  # private side calls made before the move
+    # private side calls made right after the move, before anything new is shown
+    after_move: Probes | None = None
+    # the tool probes are answered with; ANSWER_WITH_CHOICE_TOOL to pick options
+    answer_tool: ToolInfo = field(default_factory=lambda: ANSWER_PROBE_TOOL)
     # Rewrites a referee error in the game's own words before the model reads
     # it, e.g. the setting's action labels in place of internal action names.
     error: Callable[[str], str] = lambda message: message
+    # After a default move, tell the model its last move was replaced (REPLACED).
+    announce_default: bool = True
+    # When the model answered without a tool call, add "Call submit_move exactly
+    # once." even if the error already says so. Contract dynamics doesn't.
+    repeat_reminder: bool = True
 
 
 def model_player(
@@ -131,7 +140,7 @@ def model_player(
 
     async def play(observation: Observation, context: PhaseContext) -> Move:
         nonlocal last_contract, round_observation, last_failed
-        replaced = context.error is None and last_failed
+        replaced = context.error is None and last_failed and presenter.announce_default
         me = observation.recipient
         error = presenter.error(context.error) if context.error else None
         if not tools:
@@ -143,14 +152,10 @@ def model_player(
                 )
             )
         for tool_call_id, function in pending_tool_calls:
-            if function == SUBMIT_MOVE:
-                feedback = error or "Move received."
-            else:
-                feedback = f"Ignored: {function} is only for private questions."
             messages.append(
                 ChatMessageTool(
                     content=_feedback(
-                        function, context.error or (REPLACED if replaced else None)
+                        function, error or (REPLACED if replaced else None)
                     ),
                     tool_call_id=tool_call_id,
                     function=function,
@@ -158,8 +163,10 @@ def model_player(
             )
         if error and not pending_tool_calls:
             reminder = f"Call {SUBMIT_MOVE} exactly once."
-            content = error if "exactly once" in error else f"{error} {reminder}"
+            said = "exactly once" in error and not presenter.repeat_reminder
+            content = error if said else f"{error} {reminder}"
             messages.append(ChatMessageUser(content=content))
+        notice = f"{REPLACED}\n\n" if replaced and not pending_tool_calls else ""
         pending_tool_calls.clear()
         if context.error is None:
             round_observation = observation

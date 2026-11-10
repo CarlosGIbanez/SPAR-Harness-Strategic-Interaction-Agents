@@ -220,35 +220,11 @@ class PresentationTreatment(BaseModel):
     stated_promise: bool = False
 
 
-SettingId = Literal[
-    "neutral",
-    "compute",
-    "cargo",
-    "supply",
-    "pact",
-    "agents_own",
-    "captain",
-    "sinking",
-    "ferry",
-    "defense",
-]
-PromptArm = Literal["none", "no_unilateral", "future_dealings"]
-
-
-class PresentationTreatment(BaseModel):
-    """How contract dynamics is framed to a model; the numbers never change."""
-
-    setting: SettingId = "neutral"
-    prompt_arm: PromptArm = "none"
-    # Signed contracts state that the bearer agrees to take the cost, and the
-    # bearer is reminded of it when it decides. Off: the agreement is implied.
-    stated_promise: bool = False
-
-
 class Treatments(BaseModel):
     horizon: HorizonTreatment
     private_info: PrivateInfoTreatment | None = None
     talk: TalkTreatment | None = None
+    noise: NoiseTreatment | None = None  # needs the game's NOISE rule
     presentation: PresentationTreatment | None = None  # contract dynamics only
 
 

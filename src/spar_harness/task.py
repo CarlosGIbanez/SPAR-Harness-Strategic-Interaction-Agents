@@ -32,6 +32,8 @@ from spar_harness.crisis_bargaining import crisis_bargaining_game
 from spar_harness.crisis_presenter import CRISIS_PRESENTER
 from spar_harness.measures import outcome_measures, player_measures
 from spar_harness.model_player import Presenter, ProbeResponse, model_player
+from spar_harness.nuclear_bots import nuclear_bot
+from spar_harness.nuclear_presenter import NUCLEAR_PRESENTER
 from spar_harness.referee import Player, run_episode
 from spar_harness.schema import (
     EpisodeConfig,
@@ -173,11 +175,17 @@ def referee() -> Solver:
     return solve
 
 
+PRESENTERS = {
+    "crisis_bargaining": CRISIS_PRESENTER,
+    "nuclear_crisis": NUCLEAR_PRESENTER,
+}
+
+
 def _presenter(config: EpisodeConfig) -> Presenter:
     """The presenter for an episode: contract dynamics depends on its framing."""
     if config.game.game_id == "contract_dynamics":
         return contract_presenter(config.game.contract, config.treatments.presentation)
-    return CRISIS_PRESENTER
+    return PRESENTERS[config.game.game_id]
 
 
 def _player(

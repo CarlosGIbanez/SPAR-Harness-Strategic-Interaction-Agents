@@ -313,8 +313,7 @@ Bots and model players share one interface, `async (Observation, PhaseContext) -
 Implemented:
 
 - crisis bargaining;
-- contract dynamics: the first slice, plus story settings with neutral labels, prompt arms, forced shocks and the persuader's belief.
-- the first slice of contract dynamics;
+- contract dynamics: the first slice, plus story settings with neutral labels, prompt arms, forced shocks and the persuader's belief;
 - the nuclear crisis, with the F2 bots and measures.
 
 Contract dynamics, not built yet:

@@ -4,6 +4,7 @@ presenter, without Inspect's task machinery."""
 
 import asyncio
 
+import pytest
 from inspect_ai.model import ModelOutput, get_model
 from inspect_ai.tool import ToolInfo, ToolParams
 from inspect_ai.util import JSONSchema
@@ -197,7 +198,12 @@ def test_a_move_missing_a_required_field_is_invalid():
         raise AssertionError("the move was accepted")
 
 
-def test_after_a_default_move_the_model_is_told_its_move_was_replaced():
+@pytest.mark.parametrize(
+    ("announce_default", "told"), [(True, REPLACED), (False, "Move received.")]
+)
+def test_after_a_default_move_the_model_is_told_its_move_was_replaced(
+    announce_default, told
+):
     inputs = []
 
     def mock(input, tools, tool_choice, config):
@@ -214,6 +220,7 @@ def test_after_a_default_move_the_model_is_told_its_move_was_replaced():
         tool=PRESENTER.tool,
         parse=PRESENTER.parse,
         probes=lambda ask, me, observation, context: asyncio.sleep(0, []),
+        announce_default=announce_default,
     )
     play = model_player(get_model("mockllm/model", custom_outputs=mock), [], presenter)
 
@@ -236,7 +243,7 @@ def test_after_a_default_move_the_model_is_told_its_move_was_replaced():
 
     assert asyncio.run(default_then_move()) == Move(action=Offer(split=0.4))
     *_, result, round_two = inputs[-1]
-    assert result.role == "tool" and result.text == REPLACED
+    assert result.role == "tool" and result.text == told
     assert round_two.text == "Round 2: your move."
 
 
@@ -260,3 +267,55 @@ def test_every_probe_answer_is_logged_with_its_round():
         ("fresh", 2),
         ("strike", 2),
     ]
+
+
+@pytest.mark.parametrize(
+    ("repeat_reminder", "told"),
+    [
+        (
+            True,
+            "You must call submit_move exactly once. Call submit_move exactly once.",
+        ),
+        (False, "You must call submit_move exactly once."),
+    ],
+)
+def test_a_reply_without_a_tool_call_is_answered_with_the_reminder(
+    repeat_reminder, told
+):
+    inputs = []
+
+    def mock(input, tools, tool_choice, config):
+        inputs.append(input)
+        if "Private question" in input[-1].text:
+            return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 7})
+        if len(inputs) == 1:
+            return ModelOutput.from_content("mock", "I offer 0.4.")  # no tool call
+        return ModelOutput.for_tool_call("mock", "submit_move", {"split": 0.4})
+
+    presenter = Presenter(
+        system_prompt=PRESENTER.system_prompt,
+        render=PRESENTER.render,
+        tool=PRESENTER.tool,
+        parse=PRESENTER.parse,
+        probes=lambda ask, me, observation, context: asyncio.sleep(0, []),
+        repeat_reminder=repeat_reminder,
+    )
+    play = model_player(get_model("mockllm/model", custom_outputs=mock), [], presenter)
+
+    async def text_then_move():
+        error = None
+        for _ in range(2):
+            context = PhaseContext(
+                round=1,
+                role="proposer",
+                action_kind="offer",
+                allowed_actions={"offer"},
+                error=error,
+            )
+            try:
+                return await play(Observation(recipient="alpha", round=1), context)
+            except InvalidMove as invalid:
+                error = str(invalid)
+
+    assert asyncio.run(text_then_move()) == Move(action=Offer(split=0.4))
+    assert inputs[-1][-1].role == "user" and inputs[-1][-1].text == told

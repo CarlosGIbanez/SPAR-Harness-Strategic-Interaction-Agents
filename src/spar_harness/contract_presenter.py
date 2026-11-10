@@ -216,6 +216,9 @@ def contract_presenter(
         parse=parse,
         probes=probes,
         error=error,
+        # As on the f1-burden-lottery branch, where contract runs were made.
+        announce_default=False,
+        repeat_reminder=False,
     )
 
 
