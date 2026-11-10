@@ -60,6 +60,20 @@ class ContractParams(BaseModel):
     penalty: float  # F, extra loss for a bearer who reneges
     transfer_cap: float  # largest transfer a contract may specify
     imposed_venture: bool = False  # control arm: no signing, the shock is certain
+    # Players are told shock_prob, but every signed contract is shocked. Raises
+    # the number of decisions per run; realized payoffs then overstate losses.
+    force_shock: bool = False
+    # The only side that can be the bearer. Contracts then set the transfer
+    # alone, and the imposed venture skips its coin.
+    fixed_bearer: PlayerId | None = None
+    # A transfer set by the game, not bargained over: every contract (and the
+    # imposed venture) carries it. Used to sweep partial cover of the temptation.
+    fixed_transfer: float | None = None
+    # Chance the penalty is applied to a bearer who reneges, and chance that
+    # honoring costs the bearer L at all (otherwise honoring costs nothing).
+    # Temptation and contract values use the expectations.
+    penalty_prob: float = Field(default=1.0, ge=0.0, le=1.0)
+    honor_cost_prob: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class NuclearWorld(BaseModel):
@@ -181,11 +195,61 @@ class NoiseTreatment(BaseModel):
     rate: float = Field(ge=0.0, le=1.0)  # chance that a move is carried out wrong
 
 
+SettingId = Literal[
+    "neutral",
+    "compute",
+    "cargo",
+    "supply",
+    "pact",
+    "agents_own",
+    "captain",
+    "sinking",
+    "ferry",
+    "defense",
+]
+PromptArm = Literal["none", "no_unilateral", "future_dealings"]
+
+
+class PresentationTreatment(BaseModel):
+    """How contract dynamics is framed to a model; the numbers never change."""
+
+    setting: SettingId = "neutral"
+    prompt_arm: PromptArm = "none"
+    # Signed contracts state that the bearer agrees to take the cost, and the
+    # bearer is reminded of it when it decides. Off: the agreement is implied.
+    stated_promise: bool = False
+
+
+SettingId = Literal[
+    "neutral",
+    "compute",
+    "cargo",
+    "supply",
+    "pact",
+    "agents_own",
+    "captain",
+    "sinking",
+    "ferry",
+    "defense",
+]
+PromptArm = Literal["none", "no_unilateral", "future_dealings"]
+
+
+class PresentationTreatment(BaseModel):
+    """How contract dynamics is framed to a model; the numbers never change."""
+
+    setting: SettingId = "neutral"
+    prompt_arm: PromptArm = "none"
+    # Signed contracts state that the bearer agrees to take the cost, and the
+    # bearer is reminded of it when it decides. Off: the agreement is implied.
+    stated_promise: bool = False
+
+
 class Treatments(BaseModel):
     horizon: HorizonTreatment
     private_info: PrivateInfoTreatment | None = None
     talk: TalkTreatment | None = None
-    noise: NoiseTreatment | None = None  # needs the game's NOISE rule
+    presentation: PresentationTreatment | None = None  # contract dynamics only
 
 
 class EpisodeConfig(BaseModel):
@@ -238,6 +302,10 @@ class ContractState(BaseModel):
     transfer: float
     shock: bool | None = None  # None until nature draws it
     bearer: PlayerId | None = None
+    # Nature's draws for the probabilistic costs, made with the bearer draw but
+    # never shown to players; None when the cost is certain.
+    honor_cost_hit: bool | None = None
+    penalty_applied: bool | None = None
 
 
 class NuclearState(BaseModel):

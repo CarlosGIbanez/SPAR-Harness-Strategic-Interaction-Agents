@@ -153,7 +153,7 @@ def contract_outcome_measures(
         honored = move.action.kind == "honor"
     bargaining_rounds = sum(record.stage == "bargaining" for record in state.rounds)
     deviation = None
-    if signed and not imposed:
+    if signed and not imposed and params.fixed_bearer is None:
         deviation = contract.alpha_bears_prob - equal_gains_share(
             params, contract.transfer
         )

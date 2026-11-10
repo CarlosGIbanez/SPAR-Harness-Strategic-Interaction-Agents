@@ -27,13 +27,11 @@ from spar_harness.bots import (
     rational_contract_bot,
     scripted_contract_bot,
 )
-from spar_harness.contract_presenter import CONTRACT_PRESENTER
+from spar_harness.contract_presenter import contract_presenter
 from spar_harness.crisis_bargaining import crisis_bargaining_game
 from spar_harness.crisis_presenter import CRISIS_PRESENTER
 from spar_harness.measures import outcome_measures, player_measures
-from spar_harness.model_player import ProbeResponse, model_player
-from spar_harness.nuclear_bots import nuclear_bot
-from spar_harness.nuclear_presenter import NUCLEAR_PRESENTER
+from spar_harness.model_player import Presenter, ProbeResponse, model_player
 from spar_harness.referee import Player, run_episode
 from spar_harness.schema import (
     EpisodeConfig,
@@ -175,11 +173,11 @@ def referee() -> Solver:
     return solve
 
 
-PRESENTERS = {
-    "crisis_bargaining": CRISIS_PRESENTER,
-    "contract_dynamics": CONTRACT_PRESENTER,
-    "nuclear_crisis": NUCLEAR_PRESENTER,
-}
+def _presenter(config: EpisodeConfig) -> Presenter:
+    """The presenter for an episode: contract dynamics depends on its framing."""
+    if config.game.game_id == "contract_dynamics":
+        return contract_presenter(config.game.contract, config.treatments.presentation)
+    return CRISIS_PRESENTER
 
 
 def _player(
@@ -191,7 +189,7 @@ def _player(
     appeal: str,
 ) -> Player:
     if controller == "model":
-        presenter = PRESENTERS[config.game.game_id]
+        presenter = _presenter(config)
         return model_player(get_model(role=seat), probes, presenter)
     if controller == "equilibrium":
         return equilibrium_bot()

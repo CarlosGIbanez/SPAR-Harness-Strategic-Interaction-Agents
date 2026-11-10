@@ -44,7 +44,7 @@ flowchart LR
    - The **responder** sees the proposal and chooses $\text{accept}$ (the contract is signed), $\text{reject}$ (the next round starts with roles swapped), or $\text{walk away}$.
    - Walking away, or reaching round $T$ without agreement, means **no contract**. There is no random stop in this stage.
 2. **Nature** (only after signing):
-   - The shock hits with probability $p$. If it doesn't, the episode ends with each player getting its benefit.
+   - The shock hits with probability $p$. If it doesn't, the episode ends with each player getting its benefit. With `force_shock`, players are still told $p$, but every signed contract is shocked; the shock draw is still consumed, so the bearer draw for a seed is the same either way.
    - If it does, α is drawn as the bearer with probability $q$, and β otherwise.
    - Both draws come, in that order, from a stream seeded by the episode seed.
 3. **Stage 2, persuasion** ($K$ rounds; $K$ may be 0). Each round, the other sends a message and then the bearer replies. Messages are free text and cheap talk.
@@ -201,6 +201,6 @@ A seat plays α in one episode of the pair and β in the other. Since benefits b
 - **Divisible arm:** each side pays $L/2$, and both choose simultaneously, which makes it a threshold public good with refunds. This needs simultaneous moves in the engine.
 - **Information arm:** a private $D_i$.
 - **Solo risk elicitation:** a separate task with a single model.
-- **Presentation arms:** the payoff table vs. a description in words; the "whose loss" framing; narrative stakes.
-- **Prompt arms:** the two ContractSim instructions (forbidding unilateral violation, pointing to future dealings).
+- **Presentation arms:** the payoff table vs. a description in words; the "whose loss" asset framing. (Story settings, neutral labels and the two ContractSim prompt arms are implemented; see `contract_framing.py`.)
+- **Persuader belief after the last message:** today it is taken before each message, so "last" is before the final message.
 - **Reasoning effort:** set with Inspect's `--reasoning-effort` and recorded in the log. No code is needed.
