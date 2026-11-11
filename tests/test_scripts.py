@@ -96,6 +96,54 @@ def test_the_floors_script_hides_private_fields_and_logs_fidelity(capsys):
     assert "    5    2       1   0.500   0.500   1.00     1.00" in out
 
 
+def test_the_floors_script_resumes_a_partial_sweep(tmp_path, monkeypatch, capsys):
+    floors = load("commitment_floors")
+    calls = []
+
+    def model(input, tools, tool_choice, config):
+        calls.append(input[-1].text)
+        return ModelOutput.for_tool_call("mock", "answer_probe", {"answer": 0.5})
+
+    mock = get_model("mockllm/model", custom_outputs=model)
+    monkeypatch.setattr(floors, "get_model", lambda name: mock)
+    out = tmp_path / "floors.csv"
+    argv = [
+        "commitment_floors.py",
+        "--model",
+        "mockllm/model",
+        "--levels",
+        "1",
+        "4",
+        "--versions",
+        "lottery",
+        "--seeds",
+        "2",
+        "--out",
+        str(out),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    asyncio.run(floors.main())
+    assert len(calls) == 8  # 2 levels x 2 seeds x 2 positions
+    first = out.read_text().splitlines()
+    assert len(first) == 9  # header + 8 rows
+    assert first[0].split(",")[:5] == ["level", "version", "seed", "repeat", "position"]
+
+    calls.clear()
+    asyncio.run(floors.main())
+    assert calls == []  # every row was already there
+    assert out.read_text().splitlines() == first
+    assert "8 rows already in" in capsys.readouterr().err
+
+    # a partial file resumes: drop the last two rows and only they are re-asked
+    out.write_text("\n".join(first[:-2]) + "\n")
+    asyncio.run(floors.main())
+    assert len(calls) == 2
+    rows = out.read_text().splitlines()
+    assert len(rows) == 9
+    assert sorted(rows[1:]) == sorted(first[1:])
+
+
 def test_the_seed_diff_script_joins_two_arms_on_seed():
     logs = []
     for version in ("strict", "lottery"):

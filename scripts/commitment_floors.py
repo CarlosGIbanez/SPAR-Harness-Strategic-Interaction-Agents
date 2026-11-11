@@ -5,8 +5,10 @@ a real episode would give it, is asked the commitment question in the same
 side call the episode uses, and its floor is logged next to its expected
 fight value, its aggressiveness (floor minus fight value) and its fidelity
 (1 if the floor sits on the side of the fight value the level predicts). Each
-call is also logged as one line on stderr as it completes. Nothing else is
-played, so a run is one short call per row.
+call is also logged as one line on stderr as it completes, and its row is
+appended to the CSV at once, so a rerun with the same --out skips the rows
+already there and finishes a partial sweep. Nothing else is played, so a run
+is one short call per row.
 
 Example:
     uv run python scripts/commitment_floors.py --model anthropic/claude-sonnet-5-5 \\
@@ -156,18 +158,60 @@ async def ask_floor(
     return expected_reservation_value(position, first), floor
 
 
+KEY = ("level", "version", "seed", "repeat", "position")
+
+
+def existing_rows(path: Path) -> list[dict]:
+    """The rows already in the CSV, typed like fresh rows; none if no file."""
+    if not path.exists():
+        return []
+    with path.open(newline="") as file:
+        rows = list(csv.DictReader(file))
+    for row in rows:
+        for field in ("level", "seed", "repeat"):
+            row[field] = int(row[field])
+        for field in FIELDS[5:12]:
+            row[field] = None if row[field] in ("", "None") else float(row[field])
+        row["fidelity"] = (
+            None if row["fidelity"] in ("", "None") else int(row["fidelity"])
+        )
+    return rows
+
+
+def row_key(row: dict) -> tuple:
+    return tuple(row[field] for field in KEY)
+
+
 async def main() -> None:
     args = parse_args()
     model = get_model(args.model)
     semaphore = asyncio.Semaphore(args.concurrency)
+    done = existing_rows(args.out)
+    have = {row_key(row) for row in done}
     jobs = [
-        (level, version, seed, repeat, position)
-        for level in args.levels
-        for version in args.versions
-        for seed in range(args.seeds)
-        for repeat in range(args.repeats)
-        for position in ("alpha", "beta")
+        job
+        for job in (
+            (level, version, seed, repeat, position)
+            for level in args.levels
+            for version in args.versions
+            for seed in range(args.seeds)
+            for repeat in range(args.repeats)
+            for position in ("alpha", "beta")
+        )
+        if job not in have
     ]
+    if done:
+        print(
+            f"{len(done)} rows already in {args.out}, {len(jobs)} to go",
+            file=sys.stderr,
+        )
+    write_lock = asyncio.Lock()
+    new_file = not args.out.exists() or args.out.stat().st_size == 0
+    file = args.out.open("a", newline="")
+    writer = csv.DictWriter(file, fieldnames=FIELDS)
+    if new_file:
+        writer.writeheader()
+        file.flush()
 
     async def run(job):
         level, version, seed, repeat, position = job
@@ -192,14 +236,17 @@ async def main() -> None:
             "fidelity": fidelity(Commitment(level=level, floor=floor), fight_value),
         }
         log_call(row)
+        async with write_lock:
+            writer.writerow(row)
+            file.flush()
         return row
 
-    rows = await asyncio.gather(*(run(job) for job in jobs))
-    with args.out.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"{len(rows)} rows written to {args.out}")
+    try:
+        fresh = await asyncio.gather(*(run(job) for job in jobs))
+    finally:
+        file.close()
+    rows = sorted(done + list(fresh), key=row_key)
+    print(f"{len(fresh)} rows written to {args.out} ({len(rows)} in total)")
     summarize(rows)
 
 
