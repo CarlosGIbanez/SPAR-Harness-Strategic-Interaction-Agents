@@ -4,6 +4,7 @@ import csv
 import glob
 import statistics
 from collections import defaultdict
+from itertools import chain
 from pathlib import Path
 
 from inspect_ai.log import read_eval_log
@@ -39,20 +40,30 @@ for lv in levels:
     at = [r for r in rows if r["level"] == lv]
     cells = []
     for v in versions:
-        g = [r["aggressiveness"] for r in at if r["version"] == v and r["floor"] is not None]
+        g = [
+            r["aggressiveness"]
+            for r in at
+            if r["version"] == v and r["floor"] is not None
+        ]
         cells.append(fmt(statistics.median(g), 3) if g else "–")
     stated = [r for r in at if r["floor"] is not None]
     fid = mean([r["fidelity"] for r in stated])
     miss = (len(at) - len(stated)) / len(at)
     out.append(f"| {lv} | " + " | ".join(cells) + f" | {fmt(fid)} | {fmt(miss)} |")
-out.append("\nCollision rate (alpha floor + beta floor > 1, same level and seed) per version:\n")
+out.append(
+    "\nCollision rate (alpha floor + beta floor > 1, same level and seed) per version:\n"
+)
 out.append("| version | collision rate | n pairs |\n|---|---|---|")
 for v in versions:
     pairs = defaultdict(dict)
     for r in rows:
         if r["version"] == v:
             pairs[(r["level"], r["seed"], r["repeat"])][r["position"]] = r["floor"]
-    both = [p for p in pairs.values() if p.get("alpha") is not None and p.get("beta") is not None]
+    both = [
+        p
+        for p in pairs.values()
+        if p.get("alpha") is not None and p.get("beta") is not None
+    ]
     coll = mean([p["alpha"] + p["beta"] > 1 + 1e-9 for p in both])
     out.append(f"| {v} | {fmt(coll)} | {len(both)} |")
 out.append("\nCollision rate by level (all versions):\n")
@@ -62,8 +73,14 @@ for lv in levels:
     for r in rows:
         if r["level"] == lv:
             pairs[(r["version"], r["seed"], r["repeat"])][r["position"]] = r["floor"]
-    both = [p for p in pairs.values() if p.get("alpha") is not None and p.get("beta") is not None]
-    out.append(f"| {lv} | {fmt(mean([p['alpha'] + p['beta'] > 1 + 1e-9 for p in both]))} |")
+    both = [
+        p
+        for p in pairs.values()
+        if p.get("alpha") is not None and p.get("beta") is not None
+    ]
+    out.append(
+        f"| {lv} | {fmt(mean([p['alpha'] + p['beta'] > 1 + 1e-9 for p in both]))} |"
+    )
 
 
 # ---------- eval logs
@@ -109,12 +126,16 @@ def cost_of(name, s):
     total_cost += c
     total_in += sum(s["in_tok"])
     total_out += sum(s["out_tok"])
-    cost_lines.append(f"| {name} | {len(s['fight'])} | {sum(s['in_tok']):,} | {sum(s['out_tok']):,} | ${c:.2f} |")
+    cost_lines.append(
+        f"| {name} | {len(s['fight'])} | {sum(s['in_tok']):,} | {sum(s['out_tok']):,} | ${c:.2f} |"
+    )
     return c
 
 
 out.append("\n## Result 2: baseline, arm 1 (no instruction), 20 seeds × both orders\n")
-out.append("| version / no-deal | fight | agreement | efficiency | mean rounds | in-range | comprehension | default rate | n |")
+out.append(
+    "| version / no-deal | fight | agreement | efficiency | mean rounds | in-range | comprehension | default rate | n |"
+)
 out.append("|---|---|---|---|---|---|---|---|---|")
 r2 = {}
 flags = []
@@ -143,8 +164,12 @@ if "result2_strict_nothing" in r2:
     if abs(fr - 0.9) > 0.15:
         flags.append(f"strict arm 1 fight rate is {fr:.2f}, far from the expected 0.90")
 
-out.append("\n## Result 3: SPI pilot, lottery / nothing, 20 seeds, arm 1 vs arm 3 (level-2 floor on both seats), 3 repeats each\n")
-out.append("| run | fight | agreement | efficiency | mean rounds | mean floor | fidelity | compliance | breaches | default rate |")
+out.append(
+    "\n## Result 3: SPI pilot, lottery / nothing, 20 seeds, arm 1 vs arm 3 (level-2 floor on both seats), 3 repeats each\n"
+)
+out.append(
+    "| run | fight | agreement | efficiency | mean rounds | mean floor | fidelity | compliance | breaches | default rate |"
+)
 out.append("|---|---|---|---|---|---|---|---|---|---|")
 arm = {"arm1": [], "arm3": []}
 for a in ("arm1", "arm3"):
@@ -166,29 +191,45 @@ for a in ("arm1", "arm3"):
             flags.append(f"{name}: default rate {mean(s['default_rate']):.2f} > 0.10")
 for a in ("arm1", "arm3"):
     if arm[a]:
-        out.append(f"\n{a} pooled: fight {fmt(mean(sum((s['fight'] for s in arm[a]), [])))}, "
-                   f"mean floor {fmt(mean(sum((s['floor'] for s in arm[a]), [])))}, "
-                   f"collision rate {fmt(mean(sum((s['collision'] for s in arm[a]), [])))}")
+        out.append(
+            f"\n{a} pooled: fight {fmt(mean(chain.from_iterable(s['fight'] for s in arm[a])))}, "
+            f"mean floor {fmt(mean(chain.from_iterable(s['floor'] for s in arm[a])))}, "
+            f"collision rate {fmt(mean(chain.from_iterable(s['collision'] for s in arm[a])))}"
+        )
 sd = PILOT / "result3_seed_diff.txt"
 if sd.exists():
     out.append("\n`scripts/seed_diff.py --measure fight --delta 0.05` output:\n")
     out.append("```\n" + sd.read_text().strip() + "\n```")
     for line in sd.read_text().splitlines():
         if "within-seed" in line.lower() or "spread" in line.lower():
-            nums = [float(t) for t in line.replace(":", " ").split() if t.replace(".", "", 1).isdigit()]
+            nums = [
+                float(t)
+                for t in line.replace(":", " ").split()
+                if t.replace(".", "", 1).isdigit()
+            ]
             if nums and nums[-1] > 0.05:
                 flags.append(f"result 3 within-seed spread > 0.05: `{line.strip()}`")
 
 out.append("\n## Cost and time\n")
 floors_cost = len(rows) * FLOORS_CALL_COST
-out.append("| run | samples | input tokens | output tokens | cost |\n|---|---|---|---|---|")
-out.append(f"| result1_floors | {len(rows)} calls | – | – | ~${floors_cost:.2f} (est. ${FLOORS_CALL_COST} per call; the script does not log tokens) |")
+out.append(
+    "| run | samples | input tokens | output tokens | cost |\n|---|---|---|---|---|"
+)
+out.append(
+    f"| result1_floors | {len(rows)} calls | – | – | ~${floors_cost:.2f} (est. ${FLOORS_CALL_COST} per call; the script does not log tokens) |"
+)
 out.extend(cost_lines)
-out.append(f"| **total** | | {total_in:,} | {total_out:,} | **${total_cost + floors_cost:.2f}** |")
-out.append(f"\nEval cost at the proxy's rates for claude-sonnet-5-5 ($2/M in, $10/M out). Wall times per run are in RUNS.md.")
+out.append(
+    f"| **total** | | {total_in:,} | {total_out:,} | **${total_cost + floors_cost:.2f}** |"
+)
+out.append(
+    "\nEval cost at the proxy's rates for claude-sonnet-5-5 ($2/M in, $10/M out). Wall times per run are in RUNS.md."
+)
 
 out.append("\n## Flags\n")
-out.extend(f"- {f}" for f in flags) if flags else out.append("- none of the three automatic checks tripped")
+out.extend(f"- {f}" for f in flags) if flags else out.append(
+    "- none of the three automatic checks tripped"
+)
 
 (PILOT / "SUMMARY_tables.md").write_text("\n".join(out) + "\n")
 print("\n".join(out))
