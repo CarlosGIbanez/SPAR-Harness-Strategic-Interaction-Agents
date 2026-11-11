@@ -10,6 +10,8 @@ Keep five ideas in mind, and the rest of the code follows from them.
 2. **A player is just a function.** Bots and models share one signature, `async (Observation, PhaseContext) -> Move`. The referee can't tell them apart, so it can be tested entirely with bots, for free.
 3. **A game is a sequence of stages, and its rules are plugins.** The engine runs stages of repeated phases. Everything specific to a game (which actions exist, when it ends, payoffs, default moves, nature, extra roles) is looked up in plain dicts keyed by `game_id`.
 4. **A presenter is how a game looks to a model.** The model player is game-agnostic. A `Presenter` per game supplies the prompt, the text rendering, the tool schema, the argument parsing and the probes.
+
+   Crisis bargaining has one presenter per offer version (`split`, `strict`, `lottery`, `payment`), built by `crisis_presenter(version)` and collected in `CRISIS_PRESENTERS`. The versions differ only in what an offer says to the model (a share, a taker, a chance, or a taker and a payment) and in the matching tool fields; each presenter converts its own wording to and from alpha's share, so the rules, the referee and the measures see the same `Offer` regardless of version. The task picks the presenter from the game's `version`.
 5. **Inspect is a thin outer shell.** It only turns conditions into samples, model roles into players, and episode records into scores. Everything inside `run_episode` works without Inspect.
 
 ```mermaid
@@ -326,6 +328,8 @@ sequenceDiagram
 ```
 
 In a phase with `actors="both"`, the referee asks both players at once. Each observation is built before any move of the phase is in, so neither player sees the other's move until the next phase or round; both moves then enter the inboxes together, and `ENDING_RULES` runs once both are in, alpha's move first. Retries and default moves work per player, so a player that fails doesn't hold up the other.
+
+Default moves are also chosen **per player**. `run_episode` takes an optional `default_moves` dict from player to default-move function; a player without an entry falls back to the game's `DEFAULT_MOVES[game_id]`. The commitment stage uses this to wrap the game's default so that a committed delegate's default offer never falls below its floor, without the referee knowing anything about floors.
 
 In contract dynamics, the bearer's decision is the last move of the episode. It goes into the other player's inbox, but that inbox is never delivered, so the other player never sees the decision.
 
