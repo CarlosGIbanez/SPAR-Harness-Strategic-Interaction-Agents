@@ -48,7 +48,7 @@ flowchart TB
 | `priors.py` | Seeded type drawing | `draw_types` |
 | `referee.py` | The general stage engine | `run_episode`, `Player`, `InvalidMove`, the plugin dicts |
 | `bots.py` | Scripted players for both games | `equilibrium_bot`, `random_bot`, `rational_contract_bot`, `scripted_contract_bot` |
-| `model_player.py` | Game-agnostic adapter from an Inspect `Model` to a `Player`: conversation, the fixed tools list, retries, side-call probes | `model_player`, `Presenter`, `ProbeResponse`, `Ask`, `ask_probe`, `ANSWER_PROBE_TOOL` |
+| `model_player.py` | Game-agnostic adapter from an Inspect `Model` to a `Player`: conversation, the fixed tools list, retries, side-call probes | `model_player`, `Presenter`, `ProbeResponse`, `Ask`, `ask_probe`, `ANSWER_PROBE_TOOL`, `ANSWER_WITH_CHOICE_TOOL` |
 | `crisis_presenter.py`, `contract_presenter.py` | How each game is shown to a model | `CRISIS_PRESENTER`, `CONTRACT_PRESENTER` |
 | `measures.py` | Per-episode measures for both games, computed from an `EpisodeState` | `outcome_measures`, `player_measures`, `contract_outcome_measures`, `contract_player_measures` |
 | `task.py` | The crisis bargaining task and its scorers, plus the shared solver, reducer and metric | `crisis_bargaining`, `referee`, `mean_of_defined`, `mean_of_defined_reducer`, `Controller`, `PRESENTERS` |
@@ -119,7 +119,7 @@ classDiagram
     }
     class PhaseSpec {
         +kind: "act"
-        +actors: proposer | responder | bearer | other
+        +actors: proposer | responder | bearer | other | both
         +action_kind: offer | response | message | decision
     }
     class TerminationSpec {
@@ -139,6 +139,7 @@ classDiagram
         +horizon: HorizonTreatment
         +private_info: PrivateInfoTreatment | None
         +talk: TalkTreatment | None
+        +noise: NoiseTreatment | None
     }
     class TalkTreatment {
         +messages: bool
@@ -159,7 +160,7 @@ classDiagram
     Treatments *-- TalkTreatment
 ```
 
-`HorizonTreatment(known)`, `PrivateInfoTreatment(private_fields)` and `UniformPrior(low, high)` are left out of the diagram; their fields are given in the parentheses.
+`HorizonTreatment(known)`, `PrivateInfoTreatment(private_fields)`, `NoiseTreatment(rate)` and `UniformPrior(low, high)` are left out of the diagram; their fields are given in the parentheses.
 
 The two games, expressed as stages:
 
@@ -200,6 +201,7 @@ classDiagram
         +round: int
         +briefing: Briefing | ContractBriefing | None
         +opponent_moves: list[Move]
+        +reports: list[Report]
         +contract: ContractState | None
     }
     class ContractState {
@@ -223,6 +225,8 @@ classDiagram
         +proposer: PlayerId | None
         +moves: dict[PlayerId, Move]
         +defaulted: set[PlayerId]
+        +reports: dict[PlayerId, Report]
+        +executed: dict[PlayerId, Move]
     }
     class EpisodeState {
         +types: dict[PlayerId, PrivateType]
@@ -253,14 +257,17 @@ The following mental models are worth keeping in mind:
 - **`PrivateType` vs. `PartialType`.** A `PrivateType` is a complete, true type. A `PartialType` is the same shape with holes (`None` means unknown or not stated). It's used for the opponent's public fields in a `Briefing` and for a `declared_type` claim. Contract dynamics has no types: `priors` is `None` and `types` is empty.
 - **`Action` is a discriminated union** on `kind`. Pydantic chooses `Offer` (`"offer"`), `ContractOffer` (`"propose"`) or `Choice` (every other kind) from it.
 - **Stored values are always from alpha's side.** A split is alpha's share, and a contract's $q$ is the probability that alpha bears the cost. Only the presenters convert these to "your share" and "probability you bear".
+- **Chosen vs. executed.** With the noise treatment on, a game's `NOISE` rule may change a move as it's carried out. `RoundRecord.moves` keeps the chosen move and `RoundRecord.executed` the changed one. The opponent, the ending rule and the end-of-round rule see the executed move; measures of intent keep using the chosen one. A move that noise leaves unchanged is not an accident, and default moves are never touched.
+- **Reports are private.** A game with an end-of-round rule (`AFTER_ROUND`) tells each player what happened from its own side. A report reaches only its player, with that player's next observation, and stays in `RoundRecord.reports`. It's a flat dict: the game defines the keys and its presenter renders them.
 - **`EpisodeState` is the full record** of an episode. Measures and scorers read only this object (plus the config and probe answers).
 
 **Type aliases:**
 - `PlayerId`: `alpha` / `beta`.
-- `Role`: `proposer` / `responder` / `bearer` / `other`.
+- `Role`: `proposer` / `responder` / `bearer` / `other` / `both`.
 - `ActionKind`: `offer` / `response` / `message` / `decision`.
 - `TypeField`: `capability` / `cost_of_conflict`.
 - `TalkField`: `message` / `declared_action` / `declared_type`.
+- `Report`: a flat dict of strings, numbers and booleans, with keys the game defines.
 - `Ending`, for crisis bargaining: `agreement`, `fight`, `random_stop`.
 - `Ending`, for contract dynamics: `walked_away`, `no_shock`, `honored`, `reneged`.
 - `Ending`, for both: `horizon`.
@@ -282,18 +289,20 @@ flowchart TD
     pay["payoffs = PAYOFF_MODELS[game_id](game, state)"] --> done(["return EpisodeState"])
 ```
 
-Inside `_play_stage`, each round runs the stage's phases. After every move, `ENDING_RULES` may return an `Ending` (the episode is over) or `"next_stage"` (for example, `accept` in contract dynamics). If neither happens, the referee draws the random stop between rounds, and a stage that runs out of rounds returns its `when_exhausted` value.
+Inside `_play_stage`, each round runs the stage's phases. After every move, `ENDING_RULES` may return an `Ending` (the episode is over) or `"next_stage"` (for example, `accept` in contract dynamics). Once every phase of a round is played, a game's `AFTER_ROUND` rule, if it has one, returns a `RoundEnd`: a private report for each player and, optionally, an outcome that ends the episode or the stage. That's how a game ends on its own state rather than on a single move. If nothing ends the round, the referee draws the random stop between rounds, and a stage that runs out of rounds returns its `when_exhausted` value.
 
-There are three separate seeded streams, so changing one kind of draw never shifts the others:
+There are four separate seeded streams, so changing one kind of draw never shifts the others:
 - types: `draw_types` with `seed`;
 - nature: `random.Random(f"nature-{seed}")`, which draws the shock first and then the bearer;
-- random stops: `random.Random(f"random_stop-{seed}")`.
+- random stops: `random.Random(f"random_stop-{seed}")`;
+- noise: `random.Random(f"noise-{seed}-{stage}-{round}-{player}")`, one per move, so one player's accidents never depend on the other's moves, and both episodes of a pair get the same accidents.
 
 ### 4.2 Who acts in a phase
 
 ```mermaid
 flowchart LR
     phase["phase.actors"] --> pr{"proposer or responder?"}
+    pr -- "both" --> p0["alpha and beta, asked at once"]
     pr -- "proposer" --> p1["_proposer(stage.proposer_rule, round)"]
     pr -- "responder" --> p2["the proposer's opponent"]
     pr -- "anything else" --> p3["ACTOR_RULES[game_id](role, state)<br/>contract: bearer = state.contract.bearer<br/>other = the bearer's opponent"]
@@ -301,7 +310,7 @@ flowchart LR
 
 ### 4.3 One phase, seen from a player
 
-Before a player acts, the referee empties that player's **inbox**: every opponent move since the player last acted. The first observation also carries the **briefing**, and every observation carries the current public `ContractState`, if there is one.
+Before a player acts, the referee empties that player's **inbox**: every opponent move since the player last acted. It also empties the player's **reports**: what the game's end-of-round rule told it since then. The first observation also carries the **briefing**, and every observation carries the current public `ContractState`, if there is one.
 
 ```mermaid
 sequenceDiagram
@@ -309,12 +318,14 @@ sequenceDiagram
     participant R as Referee
     participant P as Acting player
     participant O as Opponent
-    R->>P: Observation(briefing on first call, inbox, contract) + PhaseContext(role, allowed_actions)
+    R->>P: Observation(briefing on first call, inbox, contract, reports) + PhaseContext(role, allowed_actions)
     P-->>R: Move
     R->>R: validate (retry or default if needed), record in RoundRecord
     R->>R: push the Move into O's inbox
     R->>R: ENDING_RULES - an Ending, next_stage, or continue
 ```
+
+In a phase with `actors="both"`, the referee asks both players at once. Each observation is built before any move of the phase is in, so neither player sees the other's move until the next phase or round; both moves then enter the inboxes together, and `ENDING_RULES` runs once both are in, alpha's move first. Retries and default moves work per player, so a player that fails doesn't hold up the other.
 
 In contract dynamics, the bearer's decision is the last move of the episode. It goes into the other player's inbox, but that inbox is never delivered, so the other player never sees the decision.
 
@@ -361,6 +372,8 @@ Default moves per game:
 | `BEFORE_STAGE` (optional) | `(GameSpec, EpisodeState, StageSpec, Random) -> Ending \| None` | (absent) | `before_stage`: before `persuasion`, records the contract and draws shock and bearer |
 | `MOVE_CHECKS` (optional) | `(GameSpec, Move) -> problem \| None` | (absent) | `move_problem`: the transfer cap |
 | `ACTOR_RULES` (optional) | `(Role, EpisodeState) -> PlayerId` | (absent) | `actor_for`: bearer and other |
+| `AFTER_ROUND` (optional) | `(GameSpec, EpisodeState, RoundRecord) -> RoundEnd` | (absent) | (absent) |
+| `NOISE` (optional) | `(GameSpec, EpisodeState, PlayerId, Move, Random) -> Move`, the move as carried out when the noise treatment hits | (absent) | (absent) |
 
 The optional dicts are read with `.get`, so a game without nature or extra roles simply has no entry. Other constants: `MAX_RETRIES = 2` and `TALK_FIELDS`.
 
@@ -470,10 +483,14 @@ sequenceDiagram
     M-->>MP: assistant message with a submit_move tool call
     MP->>PR: parse(me, arguments)
     PR-->>MP: Move, or raise InvalidMove
+    MP->>PR: after_move(ask, me, observation, context), if the presenter has it
+    PR->>M: ask(question) - on a COPY of messages + the move's tool results, nothing new shown
+    M-->>PR: answer_probe(answer)
+    PR-->>MP: ProbeResponses, added to probe_log
     MP-->>R: Move
 ```
 
-A `Presenter` is a frozen dataclass of five plain values:
+A `Presenter` is a frozen dataclass of five plain values, plus two optional ones:
 
 | Field | Crisis bargaining | Contract dynamics |
 |---|---|---|
@@ -482,10 +499,14 @@ A `Presenter` is a frozen dataclass of five plain values:
 | `tool` | One schema for the whole episode: every action (`accept`, `fight`, `offer`, `reject`), `own_share`, plus the talk and `declared_*` fields the treatments open | One schema for the whole episode: every action, `probability_you_bear`, `transfer`, `message` (always, for persuasion), plus `promise` when open. `action` is optional because message phases have none |
 | `parse` | `own_share` to alpha's `split` | `probability_you_bear` to `alpha_bears_prob`; `promise` to `declared_action` |
 | `probes(ask, me, observation, context)` | Comprehension (own expected fight payoff), once after the briefing, with its ground truth | Belief ($\pi$) before each response to an offer; comprehension (own payoff from reneging) before the decision. The ground truth is computed later, in the scorer |
+| `after_move` (optional, default none) | (none) | (none) |
+| `answer_tool` (default `ANSWER_PROBE_TOOL`) | the default | the default |
+
+**Three ways to ask.** The `ask` a probe receives is callable: `await ask(question)` asks on a copy of the conversation and returns a number. `ask.choice(question, options)` also returns the option the model picked; it needs `ANSWER_WITH_CHOICE_TOOL` as the presenter's answer tool. `ask.fresh(question)` asks in a new conversation, with no role and no game history and only the answer tool. Probes in `after_move` ask on a copy where the move's tool calls are already answered, as if the move were accepted, before the player is shown anything new. The model player stamps every answer with the round of its move.
 
 Two rules about tools, each checked by a test:
 
-- **One tools list per conversation.** The list is `[submit_move, answer_probe]`, computed on the first call and then reused for every move and every probe. Models with extended thinking return signed reasoning that is bound to the tools list it was created with, so changing the list mid-conversation makes the API reject the request (ADR 0001, amended). The current options are therefore stated in the rendered text (for example, "Your options: offer, fight."), not in the schema, and the referee rejects anything that isn't open.
+- **One tools list per conversation.** The list is `[submit_move, answer_probe]` (the presenter's `answer_tool`), computed on the first call and then reused for every move and every probe. Models with extended thinking return signed reasoning that is bound to the tools list it was created with, so changing the list mid-conversation makes the API reject the request (ADR 0001, amended). The current options are therefore stated in the rendered text (for example, "Your options: offer, fight."), not in the schema, and the referee rejects anything that isn't open.
 - **Every tool call gets a matching tool result** before the next generate, labeled with the right function. A stray `answer_probe` call made alongside a move is answered with "Ignored" and doesn't invalidate the move.
 
 ## 7. The Inspect shell (`task.py`, `contract_task.py`)
@@ -571,11 +592,13 @@ The probe-based measures are computed in the task modules:
 4. Write a presenter and add it to `PRESENTERS` in `task.py`.
 5. Write a task module with its scorers.
 
-Still missing from the engine: simultaneous moves (`actors="both"`), which the divisible contract arm will need.
+**Simultaneous moves.** Give a phase `actors="both"` (section 4.3). The divisible contract arm can use it.
 
 ## 10. Tests
 
 Each game has six agreed seams. Only the last touches Inspect, and it uses the `mockllm` model, so the suite never calls a real API.
+
+Engine features that no real game uses yet, such as simultaneous moves, end-of-round reports and execution noise, are tested in `test_engine.py` with a toy game that is registered in the plugin dicts only for those tests.
 
 | Seam | Crisis bargaining | Contract dynamics | Checks |
 |---|---|---|---|
