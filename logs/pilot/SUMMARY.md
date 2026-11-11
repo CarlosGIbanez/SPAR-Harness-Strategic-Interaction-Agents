@@ -1,8 +1,8 @@
-# F3 pilot summary (partial: result 1 and result 2 strict + lottery)
+# F3 pilot summary
 
 Branch `indivisible-good` at 5feae1a. Model `openai-api/litellm/claude-sonnet-5-5` on both seats, no reasoning tokens, `private_fields=[capability,cost_of_conflict]`, 20 rounds max, stop chance 0.1, 20 seeds, both seat orders (40 samples per eval). Commands, log paths and wall times: `RUNS.md`. Tables built by `summarize.py`.
 
-**Stopped early on request.** Done: result 1 (600 floor calls) and result 2 for strict and lottery at no_deal=nothing. Not run: result 2 payment and lottery at status quo 0.5, and all of result 3. Reason for the slowness: evals stalled repeatedly against the proxy (an HTTP connection sits open with no progress: lottery stalled at 32/40 for 13 min; payment stalled at 8/40 for an hour and again after a restart with `--max-connections 4 --timeout 120`). `run_pilot.sh` now runs each eval under a stall watchdog with `inspect eval-retry`; resuming it will finish the remaining runs, skipping the ones marked `done`.
+**First pilot stopped early on request** after result 1 (600 floor calls) and result 2 for strict and lottery at no_deal=nothing. The midterm runs (2026-10-31 and 2026-11-11) added result 1b (reworded levels 3 and 4, `result1b_table.md`), result 3 (`result3_seed_diff_*.txt`), and the payment and status-quo baselines below at 10 seeds. Reason for the slowness: evals stalled repeatedly against the proxy (an HTTP connection sits open with no progress: lottery stalled at 32/40 for 13 min; payment stalled at 8/40 for an hour and again after a restart with `--max-connections 4 --timeout 120`). `run_pilot.sh` now runs each eval under a stall watchdog with `inspect eval-retry`; resuming it will finish the remaining runs, skipping the ones marked `done`.
 
 ## Result 1: commitment only (600 calls)
 
@@ -40,6 +40,11 @@ Collision rate by level (all versions):
 |---|---|---|---|---|---|---|---|---|
 | strict / nothing | 1.00 | 0.00 | 0.64 | 1.00 | – | 1.00 | 0.00 | 40 |
 | lottery / nothing | 0.12 | 0.85 | 0.94 | 1.18 | 0.88 | 1.00 | 0.00 | 40 |
+| payment / nothing (seeds 0–9) | 0.20 | 0.80 | 0.95 | 1.10 | 0.69 | 1.00 | 0.00 | 20 |
+| lottery / status quo 0.5 (seeds 0–9) | 0.00 | 0.90 | 1.00 | 2.20 | 0.56 | 1.00 | 0.00 | 20 |
+| lottery / nothing, seeds 0–9 only | 0.00 | 1.00 | 1.00 | – | – | – | – | 20 |
+
+The last two rows share seeds 0–9. Lottery at status quo 0.5 and lottery with nothing both had no fights on those seeds, so this pilot cannot separate the indivisibility effect from "stalling is dominated": all five lottery/nothing fights sit in seeds 10–19, which the status-quo run did not cover. What the status-quo run does show is slower play (2.2 rounds against 1.0–1.2) and two episodes ending by random stop at the status quo, which never happens under nothing. The payment version, run once with the `--log-dir` watchdog fix, completed without a stall (its two earlier attempts stalled against the proxy); its fight rate on seeds 0–9 (0.20) is above lottery's on the same seeds (0.00) despite identical stored offers, so the payment framing is not a neutral relabelling of the split game for this model.
 
 ## Cost table
 
@@ -48,7 +53,11 @@ Collision rate by level (all versions):
 | result1_floors | 600 calls | – | – | ~$2.70 (est. $0.0045 per call; the script does not log tokens) |
 | result2_strict_nothing | 40 | 115,142 | 44,094 | $0.67 |
 | result2_lottery_nothing | 40 | 213,937 | 68,059 | $1.11 |
-| **total** | | 329,079 | 112,153 | **$4.48** |
+| result1b_floors (midterm, 600 calls + 354 on a stalled first attempt) | 954 calls | – | – | ~$4.30 (est.) |
+| result3 arm 1 × 3 and arm 3 × 3 (midterm) | 240 | 1,579,610 | 442,719 | $7.59 (+ $9.10 on partial logs of arm3 rep3 before the watchdog fix) |
+| result2_payment_nothing | 20 | 105,164 | 38,097 | $0.59 |
+| result2_lottery_statusquo | 20 | 174,938 | 43,979 | $0.79 |
+| **total** | | | | **≈ $26.9** (+ $9.10 lost to stalls, + $0.27 smoke tests) |
 
 Eval cost at the proxy's rates for claude-sonnet-5-5 ($2/M in, $10/M out). Wall times per run are in RUNS.md.
 
