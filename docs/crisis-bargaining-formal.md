@@ -66,13 +66,13 @@ Whenever $c_\alpha + c_\beta > 0$, the range $B$ has positive length. A fight co
 
 ## 4a. Offer versions (`version`)
 
-The stake is always stored as α's share $x$, and the payoff table above is unchanged. What differs between versions is what an offer *says* to the players, and in one case which offers are legal.
+The stake is always stored as α's share $x$, and the payoff table above is unchanged. What differs between versions is what an offer *says* to the players. All store alpha's share, so only strict changes which moves are legal.
 
 | Version | What an offer says | Payoff if accepted |
 |---|---|---|
 | `split` (default) | A share of a divisible stake: "you get $x_i$" | $x_i$ |
 | `strict` | Who takes one indivisible good | 1 to the taker, 0 to the other |
-| `lottery` | Each player's chance of getting the good | each player's chance, paid as its expected value; nothing is drawn |
+| `lottery` | Each player's chance of getting the good; stored as α's chance $x$, with β's chance $1-x$ | each player's chance, paid as its expected value; nothing is drawn |
 | `payment` | Who takes the good and what the taker pays the other, between 0 and 1 | $1 - $ payment to the taker, the payment to the other |
 
 In `strict`, an offer with $x \notin \{0, 1\}$ is invalid ("the good cannot be split"), and the proposer's opening default move is a **claim**, the offer that gives the whole good to itself. In the other three versions every $x \in [0,1]$ is legal and the game is the split game in different words: a chance of 0.3 pays 0.3, and taking the good against a payment of 0.7 pays 0.3. The fight payoff, the reservation values and the bargaining range are the same in all four versions.

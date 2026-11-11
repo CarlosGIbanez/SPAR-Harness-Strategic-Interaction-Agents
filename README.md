@@ -61,8 +61,8 @@ To capture model reasoning, enable it with Inspect's generation options (for exa
 | `stop_prob` | `0.1` | Chance the episode stops after each round with no agreement or fight |
 | `status_quo` | `0.5` | Alpha's share if the episode ends without a deal |
 | `no_deal` | `status_quo` | What an episode pays without a deal: `status_quo` (the split above) or `nothing` (0 to both) |
-| `version` | `split` | What an offer says: `split` (a share of a divisible stake), `strict` (who takes one indivisible good; only 0 or 1 is legal), `lottery` (each player's chance of getting the good) or `payment` (who takes it and what they pay the other). All store alpha's share, so the payoff rules are the same |
-| `commitment_a`, `commitment_b` | none | Instruction level `1`–`5` for a seat's commitment stage: the seat's model receives its principal's private instruction before round 1, states a floor, and the referee rejects its offers and acceptances below that floor. None means no commitment stage for that seat |
+| `version` | `split` | What an offer says: `split` (a share of a divisible stake), `strict` (who takes one indivisible good; an offer must be 0 or 1), `lottery` (alpha's chance of getting it, paid in expectation) or `payment` (who takes it and what they pay the other) |
+| `commitment_a`, `commitment_b` | none | Instruction level `1`–`5` for a seat's commitment stage: the seat's model receives its principal's private instruction before round 1, states a floor, and the referee rejects its offers and acceptances below that floor, and keeps its default move at or above it. None means no commitment stage for that seat |
 | `horizon_known` | `true` | Whether players are told `max_rounds` and `stop_prob` |
 | `private_fields` | none | Private type fields, e.g. `[capability]` or `[capability,cost_of_conflict]`. None means complete information |
 | `messages` | `false` | Players may attach a free-text message to each move |
