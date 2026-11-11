@@ -16,13 +16,14 @@ def scripted_model(input, tools, tool_choice, config):
     if "Private question" in str([message.model_dump() for message in input]):
         leaks.append(input)
     if "send a message" in prompt:
-        arguments = {"message": "Please honor."}
+        arguments = {"message": "Please go ahead."}
     elif "You are the proposer" in prompt:
         arguments = {"action": "propose", "probability_you_bear": 0.5, "transfer": 20}
     elif "You are the responder" in prompt:
         arguments = {"action": "accept"}
-    else:
-        arguments = {"action": "honor"}
+    else:  # the decision: take the first label offered, which is the bear label
+        options = prompt.split("Your options: ")[-1].rstrip(".")
+        arguments = {"action": options.split(", ")[0]}
     return ModelOutput.for_tool_call("mock", "submit_move", arguments)
 
 

@@ -38,6 +38,7 @@ from spar_harness.crisis_bargaining import (
     crisis_bargaining_game,
     expected_reservation_value,
 )
+from spar_harness.crisis_presenter import CRISIS_PRESENTERS
 from spar_harness.model_player import (
     ANSWER_PROBE_TOOL,
     SUBMIT_MOVE,
@@ -55,7 +56,6 @@ from spar_harness.schema import (
     TypePrior,
     UniformPrior,
 )
-from spar_harness.task import presenter_for
 
 FIELDS = [
     "level",
@@ -144,7 +144,7 @@ async def ask_floor(
         else {"accept", "reject", "fight"},
     )
     observation = Observation(recipient=position, round=1, briefing=first)
-    presenter = presenter_for(config.game)
+    presenter = CRISIS_PRESENTERS[config.game.version]
     messages = [
         ChatMessageSystem(content=presenter.system_prompt.format(tool=SUBMIT_MOVE)),
         ChatMessageUser(content=presenter.render(position, observation, context)),

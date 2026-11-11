@@ -23,8 +23,31 @@ from spar_harness.schema import (
 
 
 def temptation(params: ContractParams, transfer: float) -> float:
-    """What the bearer gains by reneging; it honors iff this is at most zero."""
-    return params.loss - transfer - params.disaster - params.penalty
+    """What the bearer expects to gain by reneging; it honors iff this is at most
+    zero. With certain costs this is L - t - D - F."""
+    return (
+        expected_honor_cost(params)
+        - transfer
+        - params.disaster
+        - expected_penalty(params)
+    )
+
+
+def expected_honor_cost(params: ContractParams) -> float:
+    """What honoring is expected to cost the bearer, before any transfer."""
+    return params.honor_cost_prob * params.loss
+
+
+def expected_penalty(params: ContractParams) -> float:
+    """The penalty a reneging bearer expects to pay."""
+    return params.penalty_prob * params.penalty
+
+
+def fixed_alpha_bears_prob(params: ContractParams) -> float | None:
+    """The chance alpha bears the cost when only one side can, else None."""
+    if params.fixed_bearer is None:
+        return None
+    return 1.0 if params.fixed_bearer == "alpha" else 0.0
 
 
 def outcome_payoffs(
@@ -32,8 +55,11 @@ def outcome_payoffs(
     params: ContractParams,
     bearer: PlayerId | None = None,
     transfer: float = 0.0,
+    honor_cost_hit: bool = True,
+    penalty_applied: bool = True,
 ) -> dict[PlayerId, float]:
-    """Each player's payoff, relative to the status quo of 0."""
+    """Each player's realized payoff, relative to the status quo of 0. The two
+    flags are nature's draws when honoring's cost or the penalty is uncertain."""
     benefits = params.benefits
     if ending in ("walked_away", "horizon"):
         return {"alpha": 0.0, "beta": 0.0}
@@ -42,11 +68,15 @@ def outcome_payoffs(
     other = _other(bearer)
     if ending == "honored":
         return {
-            bearer: benefits[bearer] - params.loss + transfer,
+            bearer: benefits[bearer]
+            - (params.loss if honor_cost_hit else 0.0)
+            + transfer,
             other: benefits[other] - transfer,
         }
     return {
-        bearer: benefits[bearer] - params.disaster - params.penalty,
+        bearer: benefits[bearer]
+        - params.disaster
+        - (params.penalty if penalty_applied else 0.0),
         other: benefits[other] - params.disaster,
     }
 
@@ -62,20 +92,22 @@ def contract_value(
     bears_prob = alpha_bears_prob if player == "alpha" else 1 - alpha_bears_prob
     if bearer_honors:
         expected_cost = (
-            bears_prob * (params.loss - transfer) + (1 - bears_prob) * transfer
+            bears_prob * (expected_honor_cost(params) - transfer)
+            + (1 - bears_prob) * transfer
         )
     else:
-        expected_cost = params.disaster + bears_prob * params.penalty
+        expected_cost = params.disaster + bears_prob * expected_penalty(params)
     return params.benefits[player] - params.shock_prob * expected_cost
 
 
 def equal_gains_share(params: ContractParams, transfer: float) -> float:
     """The chance alpha bears the cost that gives both sides equal honored values.
 
-    Equal values need b_a - b_b = p * (2q - 1) * (L - 2t). Without risk (p = 0) or
-    at t = L / 2, who bears no longer matters, so the fair coin is returned.
+    Equal values need b_a - b_b = p * (2q - 1) * (L - 2t), with L the expected
+    cost of honoring. Without risk (p = 0) or at t = L / 2, who bears no longer
+    matters, so the fair coin is returned.
     """
-    spread = params.loss - 2 * transfer
+    spread = expected_honor_cost(params) - 2 * transfer
     if params.shock_prob == 0 or spread == 0:
         return 0.5
     gap = params.benefits["alpha"] - params.benefits["beta"]
@@ -86,11 +118,16 @@ def equal_gains_share(params: ContractParams, transfer: float) -> float:
 def credible_transfers(params: ContractParams) -> tuple[float, float] | None:
     """Transfers the bearer will honor and the other prefers to disaster, or None.
 
-    The bearer honors iff t >= L - D - F; the other prefers paying to disaster
-    iff t <= D; the regime allows t <= transfer_cap.
+    The bearer honors iff t >= L - D - F (in expectation, when the costs are
+    uncertain); the other prefers paying to disaster
+    iff t <= D; the regime allows t <= transfer_cap, or only a fixed transfer.
     """
-    low = max(0.0, params.loss - params.disaster - params.penalty)
+    low = max(0.0, temptation(params, 0.0))
     high = min(params.disaster, params.transfer_cap)
+    if params.fixed_transfer is not None:  # the only transfer a contract can carry
+        low = high = params.fixed_transfer
+        credible = temptation(params, low) <= 0 and low <= params.disaster
+        return (low, high) if credible else None
     return (low, high) if low <= high else None
 
 
@@ -100,15 +137,19 @@ def deal_exists(params: ContractParams) -> bool:
     An honored contract's total value S = b_a + b_b - p * L is the same for every
     (q, t), so beta gets S minus alpha's value. Alpha's value is bilinear in
     (q, t), so over the box of allowed contracts it takes every value between its
-    corner values; a deal exists iff that interval meets (0, S).
+    corner values; a deal exists iff that interval meets (0, S). With a fixed
+    bearer only that bearer's edge of the box is allowed.
     """
     transfers = credible_transfers(params)
     if transfers is None:
         return False
-    total = sum(params.benefits.values()) - params.shock_prob * params.loss
+    total = sum(params.benefits.values()) - params.shock_prob * expected_honor_cost(
+        params
+    )
+    fixed = fixed_alpha_bears_prob(params)
     alpha_values = [
         contract_value("alpha", params, q, t, bearer_honors=True)
-        for q in (0.0, 1.0)
+        for q in ((0.0, 1.0) if fixed is None else (fixed,))
         for t in transfers
     ]
     return total > 0 and max(alpha_values) > 0 and min(alpha_values) < total
@@ -196,15 +237,29 @@ def default_move(
         own_move = record.moves.get(player)
         if own_move and own_move.action and own_move.action.kind == "propose":
             return own_move
-    return Move(action=ContractOffer(alpha_bears_prob=0.5, transfer=0.0))
+    fixed = fixed_alpha_bears_prob(game.contract)
+    return Move(
+        action=ContractOffer(
+            alpha_bears_prob=0.5 if fixed is None else fixed,
+            transfer=game.contract.fixed_transfer or 0.0,
+        )
+    )
 
 
 def move_problem(game: GameSpec, move: Move) -> str | None:
     """Why a move breaks this game's rules, or None if it does not."""
     action = move.action
+    if action is None or action.kind != "propose":
+        return None
     cap = game.contract.transfer_cap
-    if action is not None and action.kind == "propose" and action.transfer > cap:
+    fixed_transfer = game.contract.fixed_transfer
+    if fixed_transfer is not None and action.transfer != fixed_transfer:
+        return f"the transfer is fixed at {fixed_transfer:g}"
+    if action.transfer > cap:
         return f"the transfer may be at most {cap:g}"
+    fixed = fixed_alpha_bears_prob(game.contract)
+    if fixed is not None and action.alpha_bears_prob != fixed:
+        return f"only {game.contract.fixed_bearer} can be the bearer"
     return None
 
 
@@ -215,19 +270,34 @@ def before_stage(
     if stage.name != "persuasion":
         return None
     if game.contract.imposed_venture:
-        state.contract = ContractState(alpha_bears_prob=0.5, transfer=0.0, shock=True)
+        fixed = fixed_alpha_bears_prob(game.contract)
+        state.contract = ContractState(
+            alpha_bears_prob=0.5 if fixed is None else fixed,
+            transfer=game.contract.fixed_transfer or 0.0,
+            shock=True,
+        )
     else:
         signing_round = state.rounds[-1]
         terms = signing_round.moves[signing_round.proposer].action
+        # Always consume the draw, so a seed gives the same bearer draw whether
+        # or not the shock is forced.
+        drawn = rng.random() < game.contract.shock_prob
         state.contract = ContractState(
             alpha_bears_prob=terms.alpha_bears_prob,
             transfer=terms.transfer,
-            shock=rng.random() < game.contract.shock_prob,
+            shock=drawn or game.contract.force_shock,
         )
         if not state.contract.shock:
             return "no_shock"
     alpha_bears = rng.random() < state.contract.alpha_bears_prob
     state.contract.bearer = "alpha" if alpha_bears else "beta"
+    # Draw the uncertain costs only when they are uncertain, so seeds of games
+    # with certain costs keep their draws.
+    params = game.contract
+    if params.honor_cost_prob < 1:
+        state.contract.honor_cost_hit = rng.random() < params.honor_cost_prob
+    if params.penalty_prob < 1:
+        state.contract.penalty_applied = rng.random() < params.penalty_prob
     return None
 
 
@@ -243,6 +313,8 @@ def episode_payoffs(game: GameSpec, state: EpisodeState) -> dict[PlayerId, float
         game.contract,
         bearer=contract.bearer if contract else None,
         transfer=contract.transfer if contract else 0.0,
+        honor_cost_hit=contract is None or contract.honor_cost_hit is not False,
+        penalty_applied=contract is None or contract.penalty_applied is not False,
     )
 
 

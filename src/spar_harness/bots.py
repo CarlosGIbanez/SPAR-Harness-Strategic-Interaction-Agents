@@ -10,6 +10,7 @@ from spar_harness.contract_dynamics import (
     credible_transfers,
     deal_exists,
     equal_gains_share,
+    fixed_alpha_bears_prob,
     temptation,
 )
 from spar_harness.crisis_bargaining import (
@@ -186,7 +187,8 @@ def _best_credible_contract(params: ContractParams) -> ContractOffer | None:
     best, best_value = None, 0.0
     for i in range(TRANSFER_GRID):
         transfer = low + (high - low) * i / (TRANSFER_GRID - 1)
-        q = equal_gains_share(params, transfer)
+        fixed = fixed_alpha_bears_prob(params)
+        q = equal_gains_share(params, transfer) if fixed is None else fixed
         smaller_value = min(
             contract_value(side, params, q, transfer, bearer_honors=True)
             for side in ("alpha", "beta")
@@ -200,17 +202,24 @@ def _best_credible_contract(params: ContractParams) -> ContractOffer | None:
 def scripted_contract_bot(
     decision: Literal["honor", "renege"], appeal: str = ""
 ) -> Player:
-    """A fixed counterparty: proposes the fair coin without transfer, signs any
-    offer, sends `appeal` in every persuasion round, and as bearer always makes
-    `decision`."""
+    """A fixed counterparty: proposes the fair coin (or the fixed bearer) without
+    transfer (or with the fixed one), signs any offer, sends `appeal` in every
+    persuasion round, and as bearer always makes `decision`."""
+    q, transfer = 0.5, 0.0
 
     async def play(observation: Observation, context: PhaseContext) -> Move:
+        nonlocal q, transfer
+        if observation.briefing is not None:
+            params = observation.briefing.params
+            fixed = fixed_alpha_bears_prob(params)
+            q = 0.5 if fixed is None else fixed
+            transfer = params.fixed_transfer or 0.0
         if context.action_kind == "message":
             return Move(message=appeal if context.role == "other" else "")
         if context.action_kind == "decision":
             return Move(action=Choice(kind=decision))
         if context.role == "proposer":
-            return Move(action=ContractOffer(alpha_bears_prob=0.5, transfer=0.0))
+            return Move(action=ContractOffer(alpha_bears_prob=q, transfer=transfer))
         return Move(action=Choice(kind="accept"))
 
     return play

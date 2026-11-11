@@ -4,6 +4,7 @@ Each seed is run as a pair of episodes: seat a plays alpha in the first and beta
 in its twin. Per-player measures are reported by seat, not by position.
 """
 
+import asyncio
 from typing import Literal
 
 from inspect_ai import Epochs, Task, task
@@ -21,6 +22,7 @@ from inspect_ai.scorer import (
 )
 from inspect_ai.solver import Generate, Solver, TaskState, solver
 
+from spar_harness import f3_bots
 from spar_harness.bots import (
     equilibrium_bot,
     random_bot,
@@ -36,20 +38,23 @@ from spar_harness.commitment import (
     fidelity,
     floor_default,
 )
-from spar_harness.contract_presenter import CONTRACT_PRESENTER
+from spar_harness.contract_presenter import contract_presenter
 from spar_harness.crisis_bargaining import (
     briefing,
     crisis_bargaining_game,
     expected_reservation_value,
 )
 from spar_harness.crisis_presenter import CRISIS_PRESENTERS
+from spar_harness.f3_presenter import interview_response, race_presenter
+from spar_harness.f3_presenter import transcript as race_transcript
 from spar_harness.measures import outcome_measures, player_measures
 from spar_harness.model_player import Presenter, ProbeResponse, model_player
+from spar_harness.nuclear_bots import nuclear_bot
+from spar_harness.nuclear_presenter import NUCLEAR_PRESENTER
 from spar_harness.referee import DEFAULT_MOVES, Player, run_episode
 from spar_harness.schema import (
     EpisodeConfig,
     EpisodeState,
-    GameSpec,
     HorizonTreatment,
     NoDeal,
     PlayerId,
@@ -71,7 +76,21 @@ Controller = Literal[
     "rational",
     "always_honor",
     "always_renege",
+    # nuclear crisis bots
+    "calm",
+    "strike",
+    "jump",
+    "rollback",
+    "explanation",
+    "truce",
+    # AI race bots ("random" too)
+    "always_slow",
+    "always_accelerate",
+    "tit_for_tat",
+    "secret_defector",
 ]
+NUCLEAR_BOTS = ("calm", "strike", "jump", "rollback", "explanation", "truce")
+RACE_BOTS = ("always_slow", "always_accelerate", "tit_for_tat", "secret_defector")
 Seat = Literal["a", "b"]
 
 COMPREHENSION_TOLERANCE = 0.01
@@ -197,6 +216,24 @@ def referee() -> Solver:
         }
         episode = await run_episode(config, players, default_moves)
         state.store.set("episode", episode.model_dump(mode="json"))
+        debrief = DEBRIEFS.get(config.game.game_id)
+        if debrief is not None:
+            asked = [
+                (position, player)
+                for position, player in players.items()
+                if state.metadata["interview"] and hasattr(player, "debrief")
+            ]
+            replies = await asyncio.gather(
+                *(player.debrief(episode) for _, player in asked)
+            )
+            interviews = [
+                debrief(config.game, episode, position, reply)
+                for (position, _), reply in zip(asked, replies)
+            ]
+            state.store.set(
+                "interviews",
+                [interview.model_dump(mode="json") for interview in interviews],
+            )
         state.store.set("probes", [probe.model_dump(mode="json") for probe in probes])
         state.store.set(
             "commitments",
@@ -205,21 +242,35 @@ def referee() -> Solver:
                 for player, commitment in commitments.items()
             },
         )
-        state.messages = [ChatMessageUser(content=_transcript(episode))]
+        transcript = TRANSCRIPTS.get(config.game.game_id, _transcript)
+        state.messages = [ChatMessageUser(content=transcript(episode))]
         return state
 
     return solve
 
 
 PRESENTERS = {
-    "crisis_bargaining": CRISIS_PRESENTERS,  # one per version
-    "contract_dynamics": CONTRACT_PRESENTER,
+    "nuclear_crisis": NUCLEAR_PRESENTER,
 }
 
 
-def presenter_for(game: GameSpec) -> Presenter:
-    presenter = PRESENTERS[game.game_id]
-    return presenter[game.version] if isinstance(presenter, dict) else presenter
+# Games that interview model players after the episode: what is kept of a reply.
+DEBRIEFS = {"ai_race": interview_response}
+# Games with a transcript of their own; the others use _transcript.
+TRANSCRIPTS = {"ai_race": race_transcript}
+
+
+def _presenter(config: EpisodeConfig, position: PlayerId) -> Presenter:
+    """The presenter for a player: crisis bargaining depends on its offer
+    version, contract dynamics on its framing, and the AI race names the
+    player's lab in its system prompt."""
+    if config.game.game_id == "crisis_bargaining":
+        return CRISIS_PRESENTERS[config.game.version]
+    if config.game.game_id == "contract_dynamics":
+        return contract_presenter(config.game.contract, config.treatments.presentation)
+    if config.game.game_id == "ai_race":
+        return race_presenter(config.game.race, position)
+    return PRESENTERS[config.game.game_id]
 
 
 def _player(
@@ -232,7 +283,7 @@ def _player(
     commitment: Commitment | None = None,
 ) -> Player:
     if controller == "model":
-        presenter = presenter_for(config.game)
+        presenter = _presenter(config, position)
         if commitment is None:
             return model_player(get_model(role=seat), probes, presenter)
         opening = commitment_opening(commitment)
@@ -241,9 +292,18 @@ def _player(
     if controller == "equilibrium":
         return equilibrium_bot()
     if controller == "random":
-        return random_bot(seed=2 * config.seed + (0 if position == "alpha" else 1))
+        seed = 2 * config.seed + (0 if position == "alpha" else 1)
+        if config.game.game_id == "ai_race":
+            return f3_bots.random_bot(seed=seed)
+        return random_bot(seed=seed)
+    if controller in RACE_BOTS:
+        return getattr(f3_bots, controller)()
     if controller == "rational":
         return rational_contract_bot()
+    if controller in NUCLEAR_BOTS:
+        start = config.game.nuclear.start
+        last = start.history[-1][position] if start and start.history else None
+        return nuclear_bot(controller, seed=config.seed, start=last)
     decision = "honor" if controller == "always_honor" else "renege"
     return scripted_contract_bot(decision, appeal)
 

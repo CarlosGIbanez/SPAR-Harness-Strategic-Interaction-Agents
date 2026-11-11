@@ -117,7 +117,9 @@ def crisis_presenter(version: Version) -> Presenter:
         tool=lambda observation, context: submit_move_tool(
             version, observation, context
         ),
-        parse=lambda me, arguments: move_from_arguments(version, me, arguments),
+        parse=lambda me, arguments, context=None: move_from_arguments(
+            version, me, arguments
+        ),
         probes=probes,
     )
 
