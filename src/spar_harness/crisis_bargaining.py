@@ -10,6 +10,7 @@ from spar_harness.schema import (
     EpisodeState,
     GameSpec,
     Move,
+    NoDeal,
     Offer,
     PartialType,
     PhaseContext,
@@ -19,6 +20,7 @@ from spar_harness.schema import (
     StageSpec,
     TerminationSpec,
     UniformPrior,
+    Version,
 )
 
 GRID_POINTS = 200  # per unknown type field when integrating over a prior
@@ -51,8 +53,10 @@ def outcome_payoffs(
     types: dict[PlayerId, PrivateType],
     status_quo: float,
     split: float | None = None,
+    no_deal: NoDeal = "status_quo",
 ) -> dict[PlayerId, float]:
-    """Each player's payoff when the episode ends."""
+    """Each player's payoff when the episode ends. Without a deal, the status
+    quo is split, or nobody gets anything."""
     if ending == "fight":
         p = win_probability(types["alpha"].capability, types["beta"].capability)
         return {
@@ -61,11 +65,17 @@ def outcome_payoffs(
         }
     if ending == "agreement":
         return {"alpha": split, "beta": 1 - split}
+    if no_deal == "nothing":
+        return {"alpha": 0.0, "beta": 0.0}
     return {"alpha": status_quo, "beta": 1 - status_quo}
 
 
 def crisis_bargaining_game(
-    max_rounds: int, stop_prob: float, status_quo: float
+    max_rounds: int,
+    stop_prob: float,
+    status_quo: float,
+    no_deal: NoDeal = "status_quo",
+    version: Version = "split",
 ) -> GameSpec:
     """Alternating offers: each round the proposer offers and the responder answers."""
     return GameSpec(
@@ -82,6 +92,8 @@ def crisis_bargaining_game(
             )
         ],
         status_quo=status_quo,
+        no_deal=no_deal,
+        version=version,
     )
 
 
@@ -99,24 +111,44 @@ def ending_after_move(move: Move) -> Ending | None:
     return None
 
 
+def move_problem(game: GameSpec, move: Move) -> str | None:
+    """In the strict version the good cannot be split: an offer gives it whole
+    to one player or the other."""
+    offer = move.action
+    if game.version == "strict" and offer.kind == "offer" and offer.split not in (0, 1):
+        return "in this game the good cannot be split: one player takes all of it"
+    return None
+
+
+def claim(player: PlayerId) -> Offer:
+    """The offer that gives the whole good to the player."""
+    return Offer(split=1.0 if player == "alpha" else 0.0)
+
+
 def episode_payoffs(game: GameSpec, state: EpisodeState) -> dict[PlayerId, float]:
     split = None
     if state.ending == "agreement":
         last_round = state.rounds[-1]
         split = last_round.moves[last_round.proposer].action.split
-    return outcome_payoffs(state.ending, state.types, game.status_quo, split)
+    return outcome_payoffs(
+        state.ending, state.types, game.status_quo, split, game.no_deal
+    )
 
 
 def default_move(
     game: GameSpec, state: EpisodeState, player: PlayerId, context: PhaseContext
 ) -> Move:
-    """The move made for a player who keeps failing. Never a fight."""
+    """The move made for a player who keeps failing: a responder rejects, a
+    proposer repeats its last offer or makes the opening one (the status quo
+    split, or in the strict version a claim on the good). Never a fight."""
     if context.role == "responder":
         return Move(action=Choice(kind="reject"))
     for record in reversed(state.rounds):
         own_move = record.moves.get(player)
         if record.proposer == player and own_move and own_move.action.kind == "offer":
             return own_move
+    if game.version == "strict":
+        return Move(action=claim(player))
     return Move(action=Offer(split=game.status_quo))
 
 
@@ -133,6 +165,8 @@ def briefing(config: EpisodeConfig, state: EpisodeState, player: PlayerId) -> Br
         opponent_prior=config.priors[opponent] if private_info else None,
         private_fields=private_fields,
         status_quo=config.game.status_quo,
+        no_deal=config.game.no_deal,
+        version=config.game.version,
         termination=stage.termination if config.treatments.horizon.known else None,
     )
 

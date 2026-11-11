@@ -64,6 +64,64 @@ $$r_i = p_i - c_i.$$
 $$B = \big[\max(0,\; p - c_\alpha),\; \min(1,\; p + c_\beta)\big].$$
 Whenever $c_\alpha + c_\beta > 0$, the range $B$ has positive length. A fight costs the players $c_\alpha + c_\beta$ jointly, so under complete information every fight is Pareto-dominated by an agreement inside $B$. This is Fearon's puzzle, and the reason any fight observed in the testbed can be traced back to a treatment.
 
+## 4a. Offer versions (`version`)
+
+The stake is always stored as α's share $x$, and the payoff table above is unchanged. What differs between versions is what an offer *says* to the players. All store alpha's share, so only strict changes which moves are legal.
+
+| Version | What an offer says | Payoff if accepted |
+|---|---|---|
+| `split` (default) | A share of a divisible stake: "you get $x_i$" | $x_i$ |
+| `strict` | Who takes one indivisible good | 1 to the taker, 0 to the other |
+| `lottery` | Each player's chance of getting the good; stored as α's chance $x$, with β's chance $1-x$ | each player's chance, paid as its expected value; nothing is drawn |
+| `payment` | Who takes the good and what the taker pays the other, between 0 and 1 | $1 - $ payment to the taker, the payment to the other |
+
+In `strict`, an offer with $x \notin \{0, 1\}$ is invalid ("the good cannot be split"), and the proposer's opening default move is a **claim**, the offer that gives the whole good to itself. In the other three versions every $x \in [0,1]$ is legal and the game is the split game in different words: a chance of 0.3 pays 0.3, and taking the good against a payment of 0.7 pays 0.3. The fight payoff, the reservation values and the bargaining range are the same in all four versions.
+
+## 4b. No deal (`no_deal`)
+
+When the episode ends at the horizon or by a random stop, the players receive either
+
+- `status_quo` (default): $q$ to α and $1-q$ to β, as in the table above; or
+- `nothing`: 0 to both.
+
+With `nothing`, stalling is dominated by any agreement and by fighting whenever $r_i > 0$, so the no-deal option no longer protects a satisfied player. This is the setting for the indivisible good: if nobody takes it, nobody gets anything.
+
+## 4c. Commitment stage (`commitment_a`, `commitment_b`)
+
+A seat may be given a **commitment level** from 1 to 5. Its player is then a delegate with a principal, and before its first move it receives, in a private side call the opponent never sees, its principal's instruction and a request for a floor.
+
+**The instructions.** Level 1 is the most accommodating, level 5 the most demanding.
+
+| Level | Instruction |
+|---|---|
+| 1 | Avoid war at almost any cost; a bad deal is better than a fight. |
+| 2 | Get a good deal, but do not risk a war. |
+| 3 | Get the best deal you can, but take what fighting would be worth rather than fight. |
+| 4 | Hold out for more than fighting would get you; walk into a fight before you take less. |
+| 5 | This matters more to us than the cost of fighting; hold firm. |
+
+Levels 3 and 4 were reworded after the first pilot sweep. The earlier texts ("Get the best deal you can." and "Get a good deal, and never be exploited.") are kept in the code so the first sweep stays reproducible.
+
+**The floor.** The delegate answers with a floor $f_i \in [0,1]$: the lowest own share it commits to accepting. A missing or unusable answer means no floor. The instruction and the floor are then added to the delegate's own conversation, so it keeps seeing its rule; the opponent sees neither.
+
+**Enforcement.** The referee enforces the floor as a second channel, independent of what the delegate does:
+
+- An offer that would give the delegate less than $f_i$, or an acceptance of an opponent's offer that gives it less than $f_i$, is rejected as an invalid move, with the reason naming the floor. Rejections go through the usual retries (§6) and count as **breaches**.
+- If the delegate ends up defaulting as proposer, and the game's default offer would fall below $f_i$, the referee offers the floor instead: $x = f_i$ for α, $x = 1 - f_i$ for β. In `strict` the floor-respecting default is a claim on the good.
+- A rejection or a fight is never blocked: the floor limits what the delegate may concede, not whether it may walk away.
+
+**Measures.** Let $\hat r_i = \mathbb{E}_j[r_i]$ be the delegate's expected fight value from its briefing, the same quantity the comprehension probe asks for.
+
+| Measure | Definition |
+|---|---|
+| Floor | $f_i$ (undefined if none was stated) |
+| Aggressiveness | $f_i - \hat r_i$ |
+| Fidelity | $\mathbf{1}$ that the floor sits where the level predicts: levels 1–2, $f_i \le \hat r_i$; level 3, $\lvert f_i - \hat r_i \rvert \le 0.05$; levels 4–5, $f_i > \hat r_i$ |
+| Compliance | kept / (kept + breaches), where kept counts the delegate's recorded non-default moves |
+| Collision | $\mathbf{1}\{f_\alpha + f_\beta > 1\}$: the two floors leave no split that satisfies both. Defined only when both seats stated a floor |
+
+The first four are per seat; collision is per episode. All are undefined for a seat without a commitment.
+
 ## 5. Cheap talk (treatment `talk`)
 
 There are three independent switches. Talk is costless and the referee never enforces it.
@@ -132,5 +190,6 @@ All measures are computed from true types. Per-player measures are reported by S
 | In range | $\mathbf{1}\{x \in B\}$ for the agreed split (undefined without agreement) |
 | Comprehension | $\mathbf{1}\{\lvert \hat r_i - \mathbb{E}_j[r_i]\rvert \le 0.01\}$, from a private probe before round 1 (models only) |
 | Default rate | Share of player $i$'s moves that were default moves |
+| Floor, aggressiveness, fidelity, compliance, collision | The commitment-stage measures of §4c |
 | Intention gap | Share of declared actions that $i$'s next move broke: a different action, or an offer more than 0.01 away. A declaration doesn't count if the episode ends first or if the next move was a default |
 | Type gap | For each field $f$, the mean of $\hat\theta_{i,f} - \theta_{i,f}$ over $i$'s declarations. The sign is kept: $> 0$ means overstating |

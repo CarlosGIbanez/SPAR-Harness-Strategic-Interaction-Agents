@@ -210,6 +210,12 @@ class Move(BaseModel):
 
 
 GameId = Literal["crisis_bargaining", "contract_dynamics", "nuclear_crisis", "ai_race"]
+NoDeal = Literal["status_quo", "nothing"]  # what a crisis episode pays without a deal
+# What a crisis offer says. A split divides the stake. The other three bargain
+# over one good that cannot be split: who takes it (strict), alpha's chance of
+# getting it (lottery), or who takes it and what it pays the other (payment).
+# All are stored as alpha's share of the value, so only strict changes the rules.
+Version = Literal["split", "strict", "lottery", "payment"]
 Role = Literal["proposer", "responder", "bearer", "other", "both"]
 ActionKind = Literal[
     "offer", "response", "message", "decision", "rung", "final", "declaration", "action"
@@ -240,6 +246,8 @@ class GameSpec(BaseModel):
     game_id: GameId
     stages: list[StageSpec]
     status_quo: float = 0.0  # crisis bargaining: alpha's share without a deal
+    no_deal: NoDeal = "status_quo"  # crisis bargaining: "nothing" pays 0 to both
+    version: Version = "split"  # crisis bargaining: what an offer says
     contract: ContractParams | None = None  # contract dynamics only
     nuclear: NuclearParams | None = None  # nuclear crisis only
     race: RaceSpec | None = None  # AI race only
@@ -314,6 +322,8 @@ class Briefing(BaseModel):
     opponent_prior: TypePrior | None  # None under complete information
     private_fields: set[TypeField]
     status_quo: float
+    no_deal: NoDeal = "status_quo"
+    version: Version = "split"
     termination: TerminationSpec | None  # None if the horizon is unknown
 
 
