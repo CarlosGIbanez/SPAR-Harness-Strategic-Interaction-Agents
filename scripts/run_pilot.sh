@@ -4,7 +4,7 @@
 # Every Inspect log goes under logs/pilot/<name>/; RUNS.md records each
 # command, its log path and wall time.
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/.."
 set -a; source .env; set +a
 export OPENAI_API_KEY="$LITELLM_API_KEY" OPENAI_BASE_URL="$LITELLM_BASE_URL/v1"
 

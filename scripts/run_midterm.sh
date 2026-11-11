@@ -3,7 +3,7 @@
 # nice-to-haves. Reuses run_eval/watched from run_pilot.sh via source of the
 # shared prefix; evals requested on the command line only.
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/.."
 set -a; source .env; set +a
 export OPENAI_API_KEY="$LITELLM_API_KEY" OPENAI_BASE_URL="$LITELLM_BASE_URL/v1"
 M=openai-api/litellm/claude-sonnet-5-5

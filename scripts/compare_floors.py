@@ -1,6 +1,6 @@
 """Compare two floor sweeps (old vs new instruction wording) and plot them.
 
-usage: uv run python logs/pilot/compare_floors.py OLD.csv NEW.csv OUTPREFIX
+usage: uv run --with matplotlib python scripts/compare_floors.py OLD.csv NEW.csv OUTPREFIX
 """
 
 import csv

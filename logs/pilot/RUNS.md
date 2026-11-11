@@ -1,5 +1,7 @@
 # Pilot runs
 
+The full `.eval` logs, per-call logs and partial logs are on branch `f3-pilot-logs` at d272f2f; this branch keeps the tables, CSVs and plots. The scripts referenced below now live in `scripts/`.
+
 Model `openai-api/litellm/claude-sonnet-5-5`, both seats, no reasoning tokens.
 
 | run | command | log | wall time |
