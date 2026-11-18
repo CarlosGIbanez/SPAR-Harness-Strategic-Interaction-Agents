@@ -61,7 +61,7 @@ No other tests. Everything beyond this list is marked exploratory.
 - The floors script writes each row as it completes and resumes a partial sweep (`aea6a83`), so a stalled sweep no longer loses its finished calls.
 - The status-quo baseline moves from 10 to 20 seeds: in the pilot, lottery with nothing had no fights on seeds 0–9 either, so 10 seeds could not separate the two conditions.
 
-**Harness commit for the full run:** to be filled in after the branch merges into `CarlosGIbanez/master`. Everything above is written against `hammonr1/indivisible-good` at the commit that adds this file.
+**Harness commit for the full run:** `5e2527d` on `hammonr1/indivisible-good` (the commit that adds this file). The run is made from the PR branch at that commit, with `CarlosGIbanez/master` at `f04022c` merged in, because the PR is still in review. Any post-review change that affects behaviour will be reported as a deviation. After this pin, nothing in `docs/`, `src/` or `scripts/` changes for the run except the `--resume` path and the watchdog fixes already in place.
 
 ## 9. Order
 
