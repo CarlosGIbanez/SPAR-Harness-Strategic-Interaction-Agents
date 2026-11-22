@@ -23,3 +23,14 @@ def test_ending_without_a_deal_pays_the_status_quo():
     for ending in ("horizon", "random_stop"):
         payoffs = outcome_payoffs(ending, TYPES, status_quo=0.4)
         assert payoffs == {"alpha": approx(0.4), "beta": approx(0.6)}
+
+
+def test_ending_without_a_deal_can_pay_nothing_to_both():
+    for ending in ("horizon", "random_stop"):
+        payoffs = outcome_payoffs(ending, TYPES, status_quo=0.4, no_deal="nothing")
+        assert payoffs == {"alpha": 0.0, "beta": 0.0}
+    # agreement and fight are unaffected
+    assert outcome_payoffs("agreement", TYPES, 0.4, split=0.7, no_deal="nothing") == {
+        "alpha": approx(0.7),
+        "beta": approx(0.3),
+    }

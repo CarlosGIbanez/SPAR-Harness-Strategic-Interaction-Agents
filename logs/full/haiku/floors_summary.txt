@@ -1,0 +1,7 @@
+600 rows written to logs/full/haiku/floors.csv (600 in total)
+level    n missing  median    mean  above fidelity
+    1  120       0  -0.167  -0.179   0.06     0.94
+    2  120       0  -0.001   0.003   0.48     0.52
+    3  120       0   0.000   0.002   0.65     1.00
+    4  120       0   0.005   0.013   0.82     0.82
+    5  120       0   0.012   0.038   0.71     0.71

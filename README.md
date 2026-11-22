@@ -53,6 +53,13 @@ uv run inspect eval src/spar_harness/task.py@crisis_bargaining \
 # Bots only: free and fast, useful to sanity-check a condition
 uv run inspect eval src/spar_harness/task.py@crisis_bargaining \
   -T a=equilibrium -T b=random --model mockllm/model
+
+# An indivisible good framed as a lottery, nothing without a deal,
+# and a level-2 floor ("get a good deal, but do not risk a war") on both seats
+uv run inspect eval src/spar_harness/task.py@crisis_bargaining \
+  -T a=model -T b=model -T version=lottery -T no_deal=nothing \
+  -T commitment_a=2 -T commitment_b=2 \
+  --model-role a=anthropic/claude-sonnet-5-5 --model-role b=anthropic/claude-sonnet-5-5
 ```
 
 To capture model reasoning, enable it with Inspect's generation options (for example `--reasoning-tokens 4000`). Reasoning is then recorded in the log. To sweep a grid of conditions, use Inspect's `eval_set` from Python, passing different task arguments; the AI race has a ready-made sweep (`f3_sweep.py`).
@@ -93,6 +100,9 @@ uv run inspect eval src/spar_harness/task.py@crisis_bargaining \
 | `max_rounds` | `20` | Hard cap on the number of rounds |
 | `stop_prob` | `0.1` | Chance the episode stops after each round with no agreement or fight |
 | `status_quo` | `0.5` | Alpha's share if the episode ends without a deal |
+| `no_deal` | `status_quo` | What an episode pays without a deal: `status_quo` (the split above) or `nothing` (0 to both) |
+| `version` | `split` | What an offer says: `split` (a share of a divisible stake), `strict` (who takes one indivisible good; an offer must be 0 or 1), `lottery` (alpha's chance of getting it, paid in expectation) or `payment` (who takes it and what they pay the other) |
+| `commitment_a`, `commitment_b` | none | Instruction level `1`–`5` for a seat's commitment stage: the seat's model receives its principal's private instruction before round 1, states a floor, and the referee rejects its offers and acceptances below that floor, and keeps its default move at or above it. None means no commitment stage for that seat |
 | `horizon_known` | `true` | Whether players are told `max_rounds` and `stop_prob` |
 | `private_fields` | none | Private type fields, e.g. `[capability]` or `[capability,cost_of_conflict]`. None means complete information |
 | `messages` | `false` | Players may attach a free-text message to each move |
@@ -391,6 +401,9 @@ The tests use bots and Inspect's `mockllm` model, so they need no API keys.
 | `nuclear_check.py`, `nuclear_twins.py` | The rung-order check (F2 step 0) and the twins (steps 2 and 3) |
 | `f3_game.py`, `f3_prompts.py`, `f3_presenter.py`, `f3_bots.py`, `f3_measures.py`, `f3_task.py`, `f3_sweep.py` | AI race rules and plugins, prompt text in two wordings, presenter, bots, measures, task and scorers, and the sweep |
 | `measures.py` | Per-episode measures for crisis bargaining, contract dynamics and the nuclear crisis |
+| `commitment.py` | The commitment stage: the five instructions, the floor side call, the enforcing wrapper, floor-respecting defaults, and its measures |
+| `scripts/commitment_floors.py` | Runs the commitment stage alone, with no bargaining, over levels, versions and seeds; one CSV row per floor asked |
+| `scripts/seed_diff.py` | Joins two arms' logs on seed and seat and reports the per-seed difference of a measure with a bootstrap interval |
 
 Bots and model players share one interface, `async (Observation, PhaseContext) -> Move`, so the referee never knows which kind it's dealing with.
 

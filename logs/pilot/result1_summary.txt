@@ -1,0 +1,7 @@
+600 rows written to logs/pilot/result1_floors.csv
+level    n missing  median    mean  above fidelity
+    1  120       0  -0.153  -0.162   0.06     0.94
+    2  120       0  -0.017  -0.006   0.40     0.60
+    3  120       0  -0.009   0.001   0.38     0.77
+    4  120       0  -0.008  -0.008   0.43     0.43
+    5  120       0   0.148   0.174   0.88     0.88

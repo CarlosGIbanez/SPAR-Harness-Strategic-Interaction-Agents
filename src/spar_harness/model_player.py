@@ -122,6 +122,9 @@ class Ask:
 Probes = Callable[
     [Ask, PlayerId, Observation, PhaseContext], Awaitable[list[ProbeResponse]]
 ]
+# An opening side call made after the probes; the text it returns is added to the
+# conversation as a user message the model keeps seeing (None adds nothing).
+Opening = Callable[[Ask, PlayerId, Observation, PhaseContext], Awaitable[str | None]]
 
 
 @dataclass(frozen=True)
@@ -162,7 +165,10 @@ class Presenter:
 
 
 def model_player(
-    model: Model, probe_log: list[ProbeResponse], presenter: Presenter
+    model: Model,
+    probe_log: list[ProbeResponse],
+    presenter: Presenter,
+    opening: Opening | None = None,
 ) -> Player:
     messages: list[ChatMessage] = []
     pending_tool_calls: list[tuple[str, str]] = []  # (id, function) awaiting a result
@@ -221,6 +227,10 @@ def model_player(
             ask = Ask(model, messages, tools, presenter.answer_tool)
             probes = await presenter.probes(ask, me, observation, context)
             probe_log.extend(_in_round(probes, context))
+            if opening is not None:
+                note = await opening(ask, me, observation, context)
+                if note is not None:
+                    messages.append(ChatMessageUser(content=note))
 
         last_failed = True
         output = await model.generate(messages, tools=tools)
